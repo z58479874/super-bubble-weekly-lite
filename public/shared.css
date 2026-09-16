@@ -1,0 +1,17 @@
+.cloud-note { gap: 7px; }
+.cloud-note .cloud-state { font-weight: 700; color: #b9c4d8; }
+.cloud-note .cloud-state.synced { color: #63dab0; }
+.cloud-note .cloud-state.saving, .cloud-note .cloud-state.loading { color: #f7c96b; }
+.cloud-note .cloud-state.offline, .cloud-note .cloud-state.conflict { color: #ff948e; }
+.cloud-note button { border: 1px solid #43516a; border-radius: 8px; background: transparent; color: #dce5f6; padding: 7px 9px; text-align: left; cursor: pointer; }
+.cloud-note .publish-cache { border-color: #4e83ef; background: #1f3a6a; color: #fff; }
+.auth-modal { width: min(480px, 95vw); }
+.auth-modal form { display: grid; gap: 14px; padding: 20px 22px 0; }
+.auth-modal label { display: grid; gap: 6px; font-weight: 650; }
+.auth-modal input, .auth-modal select { width: 100%; border: 1px solid #d8dee9; border-radius: 9px; padding: 11px; background: #fff; }
+.auth-modal form > p { margin: 0; color: var(--muted); font-size: 12px; }
+.auth-modal .modal-foot { margin: 4px -22px 0; }
+.auth-modal .modal-foot > button:not(.primary) { border: 1px solid var(--line); border-radius: 9px; background: #fff; padding: 10px 16px; cursor: pointer; }
+.report-edit-fields { border: 0; margin: 0; min-width: 0; padding: 0; }
+.report-edit-fields:disabled { opacity: .78; }
+.report-flow { color: var(--muted); display: block; font-size: 12px; margin-top: 8px; }
