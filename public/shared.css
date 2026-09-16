@@ -12,6 +12,10 @@
 .auth-modal form > p { margin: 0; color: var(--muted); font-size: 12px; }
 .auth-modal .modal-foot { margin: 4px -22px 0; }
 .auth-modal .modal-foot > button:not(.primary) { border: 1px solid var(--line); border-radius: 9px; background: #fff; padding: 10px 16px; cursor: pointer; }
+.cloud-note .usage-link { border: 0; padding: 0; color: #aebbd0; font-size: 12px; text-decoration: underline; }
+.editor-guide { display: grid; gap: 6px; margin: 0 22px; padding: 12px 13px; border-radius: 9px; background: #f2f6ff; color: #344054; font-size: 13px; line-height: 1.6; }
+.editor-guide b { color: #155eef; }
+.editor-guide small { color: var(--muted); }
 .report-edit-fields { border: 0; margin: 0; min-width: 0; padding: 0; }
 .report-edit-fields:disabled { opacity: .78; }
 .report-flow { color: var(--muted); display: block; font-size: 12px; margin-top: 8px; }
