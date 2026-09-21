@@ -30,6 +30,81 @@
     const report=closureReport(),dept=reportDepartments[state.dept],confirmed=report.status==='已确认',editable=Boolean(state.cloud.session)&&!confirmed;
     return `${header('部门周报','聚焦待办闭环、协同事项与本周计划，不强制填写经营数据。')}<main class="content report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,x])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${x.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join('')}</div><section class="report-head"><div><span>当前填写</span><h2>${dept.name} · ${current.label}周报</h2><p>周期：${current.range}</p><p>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')} · 保存方式：共享保存，离线时使用本机缓存</p><small class="report-flow">填写后保存草稿，完成后标记已确认；已确认周报可重新编辑，确认版本保留。</small></div><div><span class="report-status ${confirmed?'confirmed':report.status==='草稿'?'draft':''}">${report.status||'未填写'}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${closureHistory(state.dept)}<form class="report-form closure-form" data-report-form><fieldset class="report-edit-fields" ${editable?'':'disabled'}>${window.ReportItems.render(report,confirmed)}</fieldset><div class="sticky-actions"><span>最近保存：${reportTime(report.updatedAt||report.savedAt)}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`;
   }
+  function frontPreviousFullWeek(){return [...weeks].slice(0,-1).reverse().find(week=>!week.isPartialWeek)||null}
+  function frontReport(){
+    if(state.reports.front?.front_template===1)return state.reports.front;
+    const prior=historyReports.find(report=>report.departmentId==='front'&&report.weekId===frontPreviousFullWeek()?.id);
+    const priorVersion=prior?.status==='已确认'?prior:prior?.confirmationHistory?.at(-1)?.report||prior;
+    const record=window.FrontReport.prepare(state.reports.front||{},priorVersion);
+    state.reports.front=record;return record;
+  }
+  function frontHistory(){
+    const own=state.reports.front||{},entries=[];
+    for(const report of historyReports.filter(report=>report.departmentId==='front'&&report.weekId!==current?.id)){
+      const week=weeks.find(item=>item.id===report.weekId),label=week?.range||report.weekId;
+      entries.push({label:`${label} · ${report.status||'未填写'}`,report});
+      for(const version of report.confirmationHistory||[])entries.push({label:`${label} · 已确认版本`,report:version.report});
+    }
+    for(const version of own.confirmationHistory||[])entries.push({label:'本周 · 已确认版本',report:version.report});
+    if(Object.entries(own).some(([key,value])=>/^(result_explanation|problems_|focus_|support_|undone_|review_|specific_|advice)/.test(key)&&typeof value==='string'&&value.trim()))entries.push({label:'本周旧模板原始填写（保留）',report:{...own,front_template:0}});
+    return window.FrontReport.historyHTML(entries);
+  }
+  function frontMetricChange(currentValue,previousValue,type='number'){
+    if(!Number.isFinite(currentValue))return '数据未同步';
+    if(!Number.isFinite(previousValue))return '上周完整周数据未同步';
+    if(type==='ratio')return `较上周 ${currentValue>=previousValue?'提升':'下降'} ${Math.abs(currentValue-previousValue).toFixed(2)} 个百分点`;
+    const change=currentValue-previousValue,format=type==='money'?money(Math.abs(change)):type==='count'?`${Math.abs(change).toLocaleString()}${type==='count'?'':''}`:String(Math.abs(change));
+    return `较上周 ${change>=0?'+':'-'}${format}（${delta(currentValue,previousValue)}）`;
+  }
+  function frontMemberSales(week){
+    if(!Number.isFinite(week?.revenue?.newMember))return null;
+    return Number.isFinite(week?.revenue?.renewal)?week.revenue.newMember+week.revenue.renewal:week.revenue.newMember;
+  }
+  function frontOverviewMetrics(){
+    const prior=frontPreviousFullWeek(),currentRate=ratio(cardCount(current),valid(current)),priorRate=ratio(cardCount(prior),valid(prior)),online=Number.isFinite(current?.revenue?.online)?current.revenue.online:null,priorOnline=Number.isFinite(prior?.revenue?.online)?prior.revenue.online:null,member=frontMemberSales(current),priorMember=frontMemberSales(prior),memberLabel=Number.isFinite(current?.revenue?.renewal)?'会员卡销售额':'会员卡销售额（续卡未同步）';
+    return [
+      ['本周总业绩（退款后净额）',rev(current),prior?rev(prior):null,'money','primary'],
+      ['本周业绩目标',current?.target,prior?.target,'money',''],
+      ['本周目标完成率',ratio(rev(current),current?.target),prior?ratio(rev(prior),prior.target):null,'ratio','primary'],
+      ['本周线下收入',current?.ops?.offline,prior?.ops?.offline,'money',''],
+      ['本周线上核销订单实收',online,priorOnline,'money',''],
+      [memberLabel,member,priorMember,'money','primary'],
+      ['本周办卡数',cardCount(current),prior?cardCount(prior):null,'count','primary'],
+      ['本周续卡数',current?.ops?.renewalCount,prior?.ops?.renewalCount,'count',''],
+      ['本周整体办卡转化率',currentRate,priorRate,'ratio','primary'],
+      ['本周入园家庭数',current?.admission,prior?.admission,'count','primary'],
+      ['本周内场总客流',current?.traffic,prior?.traffic,'count',''],
+      ['本周二销收入',current?.revenue?.secondary,prior?.revenue?.secondary,'money','primary'],
+      ['本周线上收入占比',ratio(online,rev(current)),ratio(priorOnline,rev(prior)),'ratio',''],
+      [Number.isFinite(current?.revenue?.renewal)?'本周会员销售占比':'本周会员新办占比（续卡未同步）',ratio(member,rev(current)),ratio(priorMember,rev(prior)),'ratio','']
+    ];
+  }
+  function frontMetricValue(value,type){return Number.isFinite(value)?type==='money'?money(value):type==='ratio'?pct(value,2):`${Number(value).toLocaleString()}`:'数据未同步'}
+  function frontOverview(){
+    const metrics=frontOverviewMetrics(),prior=frontPreviousFullWeek();
+    return `<section class="front-data-overview" data-front-module="overview"><div class="front-data-head"><div><span>1. 本周经营数据总览</span><h2>数据自动读取，无需主管重复填写</h2><p>${prior?`与上周完整周 ${prior.label} · ${prior.range} 对比`:'上周完整周数据未同步，暂不生成环比结论'}；金额单位：元。</p></div><small>闭店日不纳入日均口径；缺失数据不显示为0。</small></div><div class="front-metric-grid">${metrics.map(([label,value,previousValue,type,accent])=>{const comparisonClass=!Number.isFinite(value)||!Number.isFinite(previousValue)?'missing':value>=previousValue?'up':'down';return `<article class="${accent}"><span>${label}</span><b class="${Number.isFinite(value)?'':'missing'}">${frontMetricValue(value,type)}</b><small>上周完整周：${frontMetricValue(previousValue,type)}</small><em class="${comparisonClass}">${frontMetricChange(value,previousValue,type)}</em>${label==='本周目标完成率'&&Number.isFinite(current?.target)?`<i>目标 ${money(current.target)} · ${rev(current)>=current.target?'已达成':`距目标 ${money(current.target-rev(current))}`}</i>`:''}</article>`}).join('')}</div></section>`;
+  }
+  function frontAutoInterpretation(){
+    const prior=frontPreviousFullWeek(),rate=ratio(cardCount(current),valid(current)),priorRate=ratio(cardCount(prior),valid(prior)),facts=[];
+    if(prior&&Number.isFinite(rev(current))&&Number.isFinite(rev(prior)))facts.push(`总业绩${rev(current)>=rev(prior)?'增长':'下降'} ${money(Math.abs(rev(current)-rev(prior)))}（${delta(rev(current),rev(prior))}）`);
+    if(Number.isFinite(rate)&&Number.isFinite(priorRate))facts.push(`办卡转化率${rate>=priorRate?'提升':'下降'} ${Math.abs(rate-priorRate).toFixed(2)}个百分点`);
+    if(prior&&Number.isFinite(current?.revenue?.secondary)&&Number.isFinite(prior?.revenue?.secondary))facts.push(`二销${current.revenue.secondary>=prior.revenue.secondary?'增长':'下降'} ${money(Math.abs(current.revenue.secondary-prior.revenue.secondary))}`);
+    if(prior&&Number.isFinite(current?.admission)&&Number.isFinite(prior?.admission))facts.push(`入园家庭${current.admission>=prior.admission?'增加':'减少'} ${Math.abs(current.admission-prior.admission)}户`);
+    return `<section class="front-auto-reading"><b>自动数据提示</b><span>${facts.length?facts.join('；'):'上周完整周数据未同步，暂不自动生成环比提示。'}</span></section>`;
+  }
+  function frontSalesRows(week){return Array.isArray(D.receptionByWeek?.[week?.id])?D.receptionByWeek[week.id]:[]}
+  function frontSalesPerformance(){
+    const rows=frontSalesRows(current),priorRows=frontSalesRows(frontPreviousFullWeek()),priorByName=new Map(priorRows.map(row=>[row.name,row]));
+    if(!rows.length)return `<section class="panel form-section front-sales-module" data-front-module="sales"><div class="panel-title"><div><h2>3. 销售人员本周表现</h2><p>销售数据未同步，暂不显示虚构排名。</p></div></div><p class="empty">销售数据未同步</p></section>`;
+    const ranked=[...rows].filter(row=>!row.aggregate).sort((a,b)=>(Number(b.amount)||0)-(Number(a.amount)||0)||(Number(b.enrolled)||0)-(Number(a.enrolled)||0)||((b.receptionKnown?ratio(b.enrolled,b.reception):-1)-(a.receptionKnown?ratio(a.enrolled,a.reception):-1)));
+    const value=(number,format='count')=>Number.isFinite(number)?format==='money'?money(number):`${number.toLocaleString()}`:'数据未同步';
+    const comparison=(row,key,type)=>{const prior=priorByName.get(row.name)?.[key];if(!Number.isFinite(row[key])||!Number.isFinite(prior))return '上周完整周数据未同步';if(key==='reception'&&!row.receptionKnown)return '覆盖不完整，暂不可比';return frontMetricChange(row[key],prior,type)};
+    return `<section class="panel form-section front-sales-module" data-front-module="sales"><div class="panel-title"><div><h2>3. 销售人员本周表现</h2><p>默认按办卡金额、办卡数、个人办卡率排序；家庭/金额覆盖不完整时仅供参考，不作正式横向评价。</p></div></div><div class="table-wrap front-sales-table"><table><thead><tr><th>姓名</th><th>办卡数</th><th>办卡金额</th><th>散客家庭数</th><th>个人办卡率</th><th>家庭办卡客单价</th><th>299</th><th>599</th><th>999</th><th>与上周办卡金额对比</th><th>与上周办卡率对比</th></tr></thead><tbody>${ranked.map((row,index)=>{const rate=row.receptionKnown?ratio(row.enrolled,row.reception):null,prior=priorByName.get(row.name),priorRate=prior?.receptionKnown?ratio(prior.enrolled,prior.reception):null;return `<tr><td data-label="姓名"><b>${index+1}. ${safeValue(row.name)}</b></td><td data-label="办卡数">${value(row.enrolled)}</td><td data-label="办卡金额">${row.amountKnown?value(row.amount,'money'):`${value(row.amount,'money')}（部分）`}</td><td data-label="散客家庭数">${row.receptionKnown?value(row.reception):`${value(row.reception)}（覆盖不完整）`}</td><td data-label="个人办卡率">${Number.isFinite(rate)?pct(rate,2):'暂不可比'}</td><td data-label="家庭办卡客单价">${row.amountKnown&&row.receptionKnown&&row.enrolled>0?money(row.amount/row.enrolled):'暂不可比'}</td><td data-label="299">${value(row.c299)}</td><td data-label="599">${value(row.c599)}</td><td data-label="999">${value(row.c999)}</td><td data-label="与上周办卡金额对比">${row.amountKnown&&prior?.amountKnown?comparison(row,'amount','money'):'暂不可比'}</td><td data-label="与上周办卡率对比">${Number.isFinite(rate)&&Number.isFinite(priorRate)?frontMetricChange(rate,priorRate,'ratio'):'暂不可比'}</td></tr>`}).join('')}</tbody></table></div><p class="front-data-warning">当前员工个人家庭数与办卡金额存在覆盖不完整日期：个人办卡率、客单价及金额对比显示“暂不可比”时，不应用于正式排名。</p></section>`;
+  }
+  function frontReports(){
+    const report=frontReport(),confirmed=report.status==='已确认',editable=Boolean(state.cloud.session)&&!confirmed;
+    return `${header('部门周报','前厅部：先看经营数据，再做分析、改善和量化行动计划')}<main class="content report-page front-report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,item])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${item.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join('')}</div><section class="report-head"><div><span>当前填写</span><h2>前厅部 · ${current.label}周报</h2><p>周期：${current.range}</p><p>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')} · 保存方式：共享保存，离线时使用本机缓存</p><small class="report-flow">数据区域自动读取；分析、原因、措施和计划由主管填写。填写后保存草稿，完成后标记已确认。</small></div><div><span class="report-status ${confirmed?'confirmed':report.status==='草稿'?'draft':''}">${report.status||'未填写'}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${frontOverview()}${frontAutoInterpretation()}${frontSalesPerformance()}${frontHistory()}<form class="report-form front-report-form" data-report-form><fieldset class="report-edit-fields" ${editable?'':'disabled'}>${window.FrontReport.render(report,!editable)}</fieldset><div class="sticky-actions"><span>最近保存：${reportTime(report.updatedAt||report.savedAt)}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`;
+  }
   function persistExplains(){try{localStorage.setItem("super_bubble_weekly_lite_explains",JSON.stringify(state.explains))}catch(_){}}
   async function persistMeeting(){
     if(!current||state.cloud.session?.role!=="manager")return;
@@ -202,6 +277,7 @@
   function meetingReportStatus(status){return status==="草稿"?"草稿 / 未确认":status||"未填写"}
   function reports(){
     if(isClosureDepartment(state.dept))return closureReports();
+    if(state.dept==='front')return frontReports();
     const dept=reportDepartments[state.dept],report=state.reports[state.dept]||{},status=report.status||"未填写",confirmed=status==="已确认",metrics=departmentMetrics(state.dept),problem=common.find(x=>x.key==="problems"),undone=common.find(x=>x.key==="undone");
     const metricNotes=state.dept==="front"?`<p style="margin:10px 0 0;color:#667085;font-size:12px;line-height:1.55">员工个人转化率数据覆盖不完整，不做正式横向比较。当前为抖音主渠道近似口径，不代表精准渠道归因。</p>`:state.dept==="admin"?`<p style="margin:10px 0 0;color:#667085;font-size:12px;line-height:1.55">娃娃/弹珠、袜子/零售、缺货、补货、报修和采购需求暂无可靠自动数据。</p>`:"";
     const metricBlock=metrics.length?`<section class="department-metrics"><div class="department-metrics-title"><div><span>自动数据摘要</span><b>仅展示已有部门专属事实，无需重复抄写</b></div><small>主管只需解释变化</small></div><div class="department-metric-grid">${metrics.map(x=>`<article><span>${x[0]}</span><b>${x[1]}</b><small>${x[2]}</small></article>`).join("")}</div>${metricNotes}</section>`:'<p class="department-empty-metrics" style="margin:0 0 14px"><b>本周暂无可自动归属的现场运营数据，请主管填写关键结果、问题与本周动作。</b></p>';
@@ -214,7 +290,7 @@
     return `${header("部门周报","自动带入已有事实，主管只填写结果、问题、支持与本周动作")}<main class="content report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,x])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${x.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join("")}</div><section class="report-head"><div><span>当前填写</span><h2>${dept.name} · ${current.label}周报</h2><p style="display:flex;flex-wrap:wrap;gap:6px 16px"><span>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')}</span><span>保存方式：Supabase共享保存（离线时使用本机缓存）</span></p><small class="report-flow">填写流程：进入编辑模式 → 填写周报 → 自动保存 / 保存草稿 → 填写完成后标记已确认。</small></div><div><span class="report-status ${status==='已确认'?'confirmed':status==='草稿'?'draft':''}">${status}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${metricBlock}<form class="report-form" data-report-form><fieldset class="report-edit-fields" ${confirmed?'disabled':''}>${keyResult}${problems}${supports}${focuses}${undoneBlock}${advice}${state.dept==="ops"?operationsReviewBlock(state.dept):specificGroupBlocks(dept)}</fieldset><div class="sticky-actions"><span>最近保存：${reportTime(report.updatedAt||report.savedAt)}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`
   }
   function reportItems(deptId,key){return [0,1,2].map(i=>reportValue(deptId,`${key}_${i}`)).filter(Boolean)}
-  function meetingRows(){return Object.entries(reportDepartments).map(([id,dept])=>{const report=state.reports[id]||{};if(isClosureDepartment(id)&&report.closure_template===1)return {id,dept,report,...window.ReportItems.summary(report,id)};return {id,dept,report,key:keyResults(id),problems:reportItems(id,"problems"),undone:reportItems(id,"undone"),focus:[0,1,2].map(i=>({id:`${id}-${i}`,title:reportValue(id,`focus_${i}_title`),owner:reportValue(id,`focus_${i}_owner`),due:reportValue(id,`focus_${i}_due`),criteria:reportValue(id,`focus_${i}_criteria`)})).filter(x=>x.title),support:[0,1,2].map(i=>({id:`${id}-support-${i}`,target:reportValue(id,`support_${i}_target`),title:reportValue(id,`support_${i}_title`),result:reportValue(id,`support_${i}_result`),due:reportValue(id,`support_${i}_due`)})).filter(x=>x.title)}})}
+  function meetingRows(){return Object.entries(reportDepartments).map(([id,dept])=>{const report=state.reports[id]||{};if(isClosureDepartment(id)&&report.closure_template===1)return {id,dept,report,...window.ReportItems.summary(report,id)};if(id==='front'&&report.front_template===1)return {id,dept,report,...window.FrontReport.summary(report,id)};return {id,dept,report,key:keyResults(id),problems:reportItems(id,"problems"),undone:reportItems(id,"undone"),focus:[0,1,2].map(i=>({id:`${id}-${i}`,title:reportValue(id,`focus_${i}_title`),owner:reportValue(id,`focus_${i}_owner`),due:reportValue(id,`focus_${i}_due`),criteria:reportValue(id,`focus_${i}_criteria`)})).filter(x=>x.title),support:[0,1,2].map(i=>({id:`${id}-support-${i}`,target:reportValue(id,`support_${i}_target`),title:reportValue(id,`support_${i}_title`),result:reportValue(id,`support_${i}_result`),due:reportValue(id,`support_${i}_due`)})).filter(x=>x.title)}})}
   function meetingV2(){
     const d=douyinSummary(current),mode=state.meetingMode,rate=ratio(cardCount(current),valid(current)),priorRate=ratio(cardCount(previous),valid(previous));
     const lines=[["门票",current.revenue.ticket-previous.revenue.ticket],["会员新办",current.revenue.newMember-previous.revenue.newMember],["会员续卡",current.revenue.renewal-previous.revenue.renewal],["线上核销",current.revenue.online-previous.revenue.online],["二销",current.revenue.secondary-previous.revenue.secondary],["其他",current.revenue.other-previous.revenue.other],["退款",current.revenue.refund-previous.revenue.refund]];
@@ -248,13 +324,14 @@
     return "";
   }
   function emptyData(){return `${header(state.page==='overview'?'周经营总览':state.page==='frontDouyin'?'前厅与抖音':state.page==='reports'?'部门周报':'周会与老板汇报','本周经营数据尚未发布')}<main class="content"><section class="panel real-data-empty"><span>等待周版本</span><h2>本周经营数据尚未写入网页</h2><p>请由店长把本周Excel交给Codex生成新的静态数据包并发布。门店员工无需自行导入Excel。</p></section></main>`}
-  function validateReportDOM(){if(state.page!=="reports"||!current)return;const closure=isClosureDepartment(state.dept),expected=closure?Object.fromEntries(window.ReportItems.sections.map(s=>[s.key,0])):{"key-result":1,problems:6,support:12,focus:12,undone:9};const result={};for(const [id,minFields] of Object.entries(expected)){const module=document.querySelector(closure?`[data-closure-module="${id}"]`:`[data-report-module="${id}"]`),fields=module?module.querySelectorAll("input, textarea, select").length:0;result[id]={exists:Boolean(module),fields,fillable:fields>=minFields}}const ok=Object.values(result).every(x=>x.exists&&x.fillable);document.documentElement.dataset.reportDomReady=ok?"true":"false";window.__liteReportDomCheck={ok,result};if(!ok)console.error("部门周报核心模块渲染不完整",result)}
+  function validateReportDOM(){if(state.page!=="reports"||!current)return;const closure=isClosureDepartment(state.dept),front=state.dept==='front',expected=closure?Object.fromEntries(window.ReportItems.sections.map(s=>[s.key,0])):front?Object.fromEntries([['overview',0],['analysis',5],['sales',0],...window.FrontReport.sections.map(s=>[s.key,0])]):{"key-result":1,problems:6,support:12,focus:12,undone:9};const result={};for(const [id,minFields] of Object.entries(expected)){const selector=closure?`[data-closure-module="${id}"]`:`[data-${front?'front':'report'}-module="${id}"]`,module=document.querySelector(selector),fields=module?module.querySelectorAll("input, textarea, select").length:0;result[id]={exists:Boolean(module),fields,fillable:fields>=minFields}}const ok=Object.values(result).every(x=>x.exists&&x.fillable);document.documentElement.dataset.reportDomReady=ok?"true":"false";window.__liteReportDomCheck={ok,result};if(!ok)console.error("部门周报核心模块渲染不完整",result)}
   function render(){let body=!current?emptyData():state.page==='overview'?overview():state.page==='frontDouyin'?frontDouyin():state.page==='reports'?reports():meetingV2();app.innerHTML=`<div class="shell ${state.presentation?'presentation':''}">${sidebar()}<div class="workspace">${body}</div></div>${modal()}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;bind();validateReportDOM()}
   function reportDraft(status="草稿"){
     const form=document.querySelector('[data-report-form]');if(!form||!current)return null;
     const existing=state.reports[state.dept]||{};let record={...existing,departmentId:state.dept,weekId:current.id,status,editorName:state.cloud.session?.name||existing.editorName||"未填写"};
     for(const [key,value] of new FormData(form).entries())record[key]=value;
     if(isClosureDepartment(state.dept))record=window.ReportItems.read(form,record);
+    if(state.dept==='front')record=window.FrontReport.read(form,record);
     if(status!=="已确认"){record.confirmedBy="";record.confirmedAt=""}
     return record;
   }
@@ -294,6 +371,32 @@
       const el=event.target.closest('[data-closure-row]');if(!el)return;
       const row=window.ReportItems.read(form,state.reports[state.dept])[`closure_${el.dataset.section}`].find(x=>x.id===el.dataset.closureRow),t=window.ReportItems.tone(row,el.dataset.section);
       el.querySelector('[data-row-title]').textContent=row.title||'待填写事项';const badge=el.querySelector('[data-row-status]');badge.className=`closure-status ${t.color}`;badge.textContent=t.label;
+    });
+  }
+  function bindFrontReport(){
+    if(state.page!=='reports'||state.dept!=='front'||!state.cloud.session||state.reports.front?.status==='已确认')return;
+    const form=document.querySelector('[data-report-form]');if(!form)return;
+    const change=fn=>{
+      clearTimeout(reportAutosaveTimer);
+      const next=reportDraft('草稿');if(!next)return;
+      fn(next);state.reports.front=next;window.CloudSync.cacheReport('front',next);render();saveReport('草稿',{silent:true,record:next});
+    };
+    form.querySelectorAll('[data-front-add]').forEach(button=>button.onclick=()=>change(report=>{report[`front_${button.dataset.frontAdd}`].push(window.FrontReport.blank())}));
+    form.querySelector('[data-front-carry]')?.addEventListener('click',()=>change(report=>Object.assign(report,window.FrontReport.carryFollowups(report))));
+    form.querySelectorAll('[data-front-delete]').forEach(button=>button.onclick=()=>{
+      const element=button.closest('[data-front-row]'),key=`front_${element.dataset.frontSection}`,id=element.dataset.frontRow;
+      const row=window.FrontReport.read(form,state.reports.front)[key].find(item=>item.id===id);
+      if(window.FrontReport.filled(row)&&!window.confirm('确认删除本行？已确认的历史版本不受影响。'))return;
+      change(report=>{if(row.source)report.front_dismissed_sources=[...(report.front_dismissed_sources||[]),row.source];report[key]=report[key].filter(item=>item.id!==id)});
+    });
+    const move=(id,target)=>change(report=>{const rows=report.front_plans,from=rows.findIndex(item=>item.id===id);if(from<0||target<0||target>=rows.length)return;rows.splice(target,0,rows.splice(from,1)[0])});
+    form.querySelectorAll('[data-front-move]').forEach(button=>button.onclick=()=>{const id=button.closest('[data-front-row]').dataset.frontRow;move(id,state.reports.front.front_plans.findIndex(item=>item.id===id)+Number(button.dataset.frontMove))});
+    form.querySelectorAll('.closure-drag').forEach(handle=>{handle.ondragstart=event=>{closureDragId=handle.closest('[data-front-row]').dataset.frontRow;event.dataTransfer.setData('text/plain',closureDragId);event.dataTransfer.effectAllowed='move'};handle.ondragend=()=>{closureDragId=null}});
+    form.querySelectorAll('[data-front-section="plans"]').forEach(element=>{element.ondragover=event=>{if(closureDragId){event.preventDefault();event.dataTransfer.dropEffect='move'}};element.ondrop=event=>{event.preventDefault();if(!closureDragId)return;const id=closureDragId;closureDragId=null;move(id,state.reports.front.front_plans.findIndex(item=>item.id===element.dataset.frontRow))}});
+    form.addEventListener('input',event=>{
+      const element=event.target.closest('[data-front-row]');if(!element)return;
+      const row=window.FrontReport.read(form,state.reports.front)[`front_${element.dataset.frontSection}`].find(item=>item.id===element.dataset.frontRow),tone=window.FrontReport.tone(row,element.dataset.frontSection);
+      element.querySelector('[data-front-title]').textContent=row.title||'待填写事项';const badge=element.querySelector('[data-front-status]');badge.className=`closure-status ${tone.color}`;badge.textContent=tone.label;
     });
   }
   function bindCore(){
@@ -351,6 +454,7 @@
   function bind(){
     originalBind();
     bindClosureReport();
+    bindFrontReport();
     decorateMeetingReport();
     if(state.page==='meeting'&&state.meetingMode==='boss'){const insights=document.querySelector('.boss-insights'),actions=document.querySelector('.action-summary');if(insights&&actions)actions.before(insights)}
     document.querySelector('[data-presentation]')?.addEventListener('click',()=>{state.presentation=!state.presentation;render()});

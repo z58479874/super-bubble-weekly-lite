@@ -46,3 +46,32 @@
 .closure-history dt { font-weight: 600; }
 .closure-history dd { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media(max-width:650px){.closure-fields{grid-template-columns:1fr}.closure-list{max-height:600px}.closure-row summary{gap:6px;padding:10px}}
+.front-data-overview { margin: 16px 0; padding: 18px 20px; border: 1px solid #d9e4f8; border-radius: 12px; background: #f8fbff; }
+.front-data-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 14px; }
+.front-data-head > div > span { color: #175cd3; font-size: 13px; font-weight: 700; }
+.front-data-head h2 { margin: 4px 0; font-size: 20px; color: #1d2939; }
+.front-data-head p, .front-data-head > small { margin: 0; color: #667085; font-size: 12px; line-height: 1.55; }
+.front-data-head > small { max-width: 240px; text-align: right; }
+.front-metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.front-metric-grid article { min-width: 0; padding: 12px; border: 1px solid #e3e9f3; border-radius: 9px; background: #fff; display: grid; gap: 5px; }
+.front-metric-grid article.primary { border-color: #bdd2f5; box-shadow: inset 3px 0 #2e6edb; }
+.front-metric-grid article > span { color: #475467; font-size: 12px; font-weight: 650; line-height: 1.35; }
+.front-metric-grid article > b { color: #1d2939; font-size: 21px; line-height: 1.15; white-space: nowrap; }
+.front-metric-grid article > b.missing { color: #98a2b3; font-size: 16px; }
+.front-metric-grid article > small, .front-metric-grid article > em, .front-metric-grid article > i { color: #667085; font-size: 11px; font-style: normal; line-height: 1.4; overflow-wrap: anywhere; }
+.front-metric-grid article > em.up { color: #067647; }.front-metric-grid article > em.down { color: #b42318; }.front-metric-grid article > em.missing { color: #98a2b3; }
+.front-auto-reading { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 16px; padding: 12px 14px; border-left: 3px solid #2e6edb; border-radius: 8px; background: #f2f6ff; color: #344054; font-size: 13px; line-height: 1.6; }
+.front-auto-reading b { white-space: nowrap; color: #175cd3; }.front-auto-reading span { overflow-wrap: anywhere; }
+.front-insight-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+.front-insight-fields label { display: grid; gap: 6px; color: #475467; font-size: 13px; font-weight: 650; min-width: 0; }
+.front-insight-fields label:first-child { grid-column: 1 / -1; }
+.front-insight-fields textarea { min-height: 80px; width: 100%; min-width: 0; padding: 10px; border: 1px solid #d8dee9; border-radius: 8px; font: inherit; resize: vertical; }
+.front-sales-module { margin-bottom: 16px; }.front-sales-table { margin-top: 12px; }.front-sales-table table { min-width: 1120px; }
+.front-sales-table th { white-space: nowrap; }.front-data-warning { margin: 12px 0 0; color: #b54708; font-size: 12px; line-height: 1.55; }
+@media(max-width:1120px){.front-metric-grid{grid-template-columns:repeat(3,minmax(0,1fr));}}
+@media(max-width:760px){
+  .front-data-overview { padding: 14px; }.front-data-head { display: grid; gap: 6px; }.front-data-head > small { max-width: none; text-align: left; }
+  .front-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }.front-metric-grid article { padding: 10px; }.front-metric-grid article > b { font-size: 18px; white-space: normal; }
+  .front-auto-reading { display: grid; gap: 4px; }.front-insight-fields { grid-template-columns: 1fr; }.front-insight-fields label:first-child { grid-column: auto; }
+  .front-sales-table { overflow: visible; }.front-sales-table table, .front-sales-table tbody, .front-sales-table tr, .front-sales-table td { display: block; min-width: 0; width: 100%; }.front-sales-table thead { display: none; }.front-sales-table tr { margin: 10px 0; padding: 8px 10px; border: 1px solid #e3e9f3; border-radius: 9px; background: #fff; }.front-sales-table td { display: grid; grid-template-columns: minmax(94px,42%) minmax(0,1fr); gap: 8px; padding: 6px 0; border: 0; text-align: left; overflow-wrap: anywhere; }.front-sales-table td::before { content: attr(data-label); color: #667085; font-size: 12px; }.front-sales-table td:first-child { padding-top: 2px; }
+}
