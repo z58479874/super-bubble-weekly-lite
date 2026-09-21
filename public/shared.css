@@ -19,3 +19,30 @@
 .report-edit-fields { border: 0; margin: 0; min-width: 0; padding: 0; }
 .report-edit-fields:disabled { opacity: .78; }
 .report-flow { color: var(--muted); display: block; font-size: 12px; margin-top: 8px; }
+.closure-module .panel-title p { white-space: normal; }
+.closure-list { max-height: 680px; overflow-y: auto; margin: 12px 0; }
+.closure-row { border: 1px solid var(--line); border-radius: 9px; margin: 10px 0; background: #fff; }
+.closure-row summary { display: flex; align-items: center; gap: 12px; padding: 14px; cursor: pointer; }
+.closure-row summary::before { content: '▸'; color: var(--muted); }
+.closure-row[open] summary::before { content: '▾'; }
+.closure-row summary b { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.closure-drag { cursor: grab; font-size: 22px; color: var(--muted); }
+.closure-status { border-radius: 6px; padding: 3px 8px; font-size: 12px; white-space: nowrap; }
+.closure-status.green { color: #067647; background: #ecfdf3; }
+.closure-status.blue { color: #175cd3; background: #eff8ff; }
+.closure-status.orange { color: #b54708; background: #fffaeb; }
+.closure-status.red { color: #b42318; background: #fef3f2; }
+.closure-status.gray { color: #667085; background: #f2f4f7; }
+.closure-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 16px; padding: 0 16px 16px; }
+.closure-fields label { display: grid; gap: 5px; min-width: 0; color: #475467; font-size: 13px; }
+.closure-fields input,.closure-fields select,.closure-fields textarea { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #d8dee9; border-radius: 7px; font: inherit; background: white; }
+.closure-fields textarea { resize: vertical; }
+.closure-controls { padding: 0 16px 14px; display: flex; gap: 8px; justify-content: flex-end; }
+.closure-source { display: block; padding: 0 16px 10px; color: var(--muted); }
+.closure-history,.closure-history-empty { margin: 0 0 16px; font-size: 13px; color: #667085; }
+.closure-history summary { cursor: pointer; padding: 8px 0; }
+.closure-history > details { padding: 8px 16px; border-left: 2px solid var(--line); }
+.closure-history dl { background: #fff; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.closure-history dt { font-weight: 600; }
+.closure-history dd { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media(max-width:650px){.closure-fields{grid-template-columns:1fr}.closure-list{max-height:600px}.closure-row summary{gap:6px;padding:10px}}

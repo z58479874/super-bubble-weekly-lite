@@ -117,11 +117,15 @@
       normalized.confirmedBy = record.confirmedBy || who;
       normalized.confirmedAt = record.confirmedAt || now;
     }
-    const ignored = new Set(["departmentId", "weekId", "reportId", "version", "updatedAt", "savedAt", "editorName"]);
+    const ignored = new Set(["departmentId", "weekId", "reportId", "version", "updatedAt", "savedAt", "editorName", "confirmationHistory"]);
     const rows = Object.entries(normalized)
       .filter(([key]) => !ignored.has(key))
       .map(([key, value]) => ({ report_id: id, department, section: sectionFor(key), item_key: key, value: value ?? "", status, editor_name: who, updated_at: now }));
     if (!rows.some((row) => row.item_key === "status")) rows.push({ report_id: id, department, section: "meta", item_key: "status", value: record.status || "未填写", status, editor_name: who, updated_at: now });
+    if (normalized.status === '已确认') {
+      const { confirmationHistory, ...snapshot } = normalized;
+      rows.push({report_id:id,department,section:'confirmation_history',item_key:`confirmed_${normalized.confirmedAt}`,value:snapshot,status:'confirmed',editor_name:normalized.confirmedBy,updated_at:normalized.confirmedAt});
+    }
     return rows;
   }
 
@@ -159,6 +163,10 @@
       const key = `${row.report_id}|${row.department}`;
       const week = weekByReport.get(row.report_id);
       const report = reports.get(key) || { departmentId: row.department, weekId: week.id, reportId: row.report_id, status: "未填写" };
+      if(row.section==='confirmation_history'){
+        report.confirmationHistory=[...(report.confirmationHistory||[]),{id:row.item_key,report:row.value}].sort((a,b)=>(a.report.confirmedAt||'').localeCompare(b.report.confirmedAt||''));
+        reports.set(key,report);continue;
+      }
       report[row.item_key] = row.value;
       report.status = uiStatus(row.status);
       report.editorName = row.editor_name;
@@ -217,6 +225,12 @@
     logout() { sessionStorage.removeItem(USER_KEY); notify({ type: "session", session: null }); },
     bootstrap,
     startPolling,
+    async archiveConfirmed(department,record){
+      if(record.status!=='已确认')return;
+      const fixed={...record,confirmedAt:record.confirmedAt||record.updatedAt||new Date().toISOString(),confirmedBy:record.confirmedBy||record.editorName||session()?.name};
+      const rows=reportRows(department,fixed).filter(row=>row.section==='confirmation_history');
+      const saved=await upsertRows(rows);mergeCachedRows(saved.map(row=>({...row,_pending:false})));
+    },
     cacheReport(department, record) { mergeCachedRows(reportRows(department, record).map((row) => ({ ...row, _pending: true }))); },
     cacheMeeting(record) { mergeCachedRows(meetingRows(record).map((row) => ({ ...row, _pending: true }))); },
     async saveReport(department, record) {
@@ -224,8 +238,8 @@
       mergeCachedRows(rows.map((row) => ({ ...row, _pending: true })));
       const saved = await upsertRows(rows);
       mergeCachedRows(saved.map((row) => ({ ...row, _pending: false })));
-      const payload = assemble(saved, recentWeeks());
-      const report = payload.reports.find((item) => item.departmentId === department) || { ...record, updatedAt: new Date().toISOString() };
+      const payload = assemble(readCachedRows(recentWeeks()), recentWeeks());
+      const report = payload.reports.find((item) => item.departmentId === department && item.weekId === record.weekId) || { ...record, updatedAt: new Date().toISOString() };
       return { report };
     },
     async saveMeeting(record) {

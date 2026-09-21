@@ -6,6 +6,30 @@
   const savedEditorName=()=>{try{return localStorage.getItem(EDITOR_NAME_KEY)||""}catch(_){return ""}};
   const state={page:"overview",tab:"front",dept:"ops",rank:"rate",modal:null,reports:{},reviewRows:{ops:0},meetingMode:"supervisor",presentation:false,meetingEditor:null,meeting:{actions:[],decisions:[],ownerSupport:[]},toast:"",explains:{...explainDefaults,...savedExplains},authIntent:"edit",cloud:{status:"loading",source:"notes",lastUpdated:"",session:window.CloudSync?.session?.()||null}};
   let reportAutosaveTimer=null,reportSaveQueue=Promise.resolve();
+  let historyReports=[],closureDragId=null;
+  const isClosureDepartment=id=>id==='ops'||id==='admin';
+  function closureReport(id=state.dept){
+    if(state.reports[id]?.closure_template===1)return state.reports[id];
+    const prior=historyReports.find(r=>r.departmentId===id&&r.weekId===previous?.id);
+    const priorVersion=prior?.status==='已确认'?prior:prior?.confirmationHistory?.at(-1)?.report||prior;
+    const record=window.ReportItems.prepare(state.reports[id]||{},priorVersion);
+    state.reports[id]=record;return record;
+  }
+  function closureHistory(id){
+    const own=state.reports[id]||{},entries=[];
+    for(const r of historyReports.filter(r=>r.departmentId===id&&r.weekId!==current?.id)){
+      const week=weeks.find(w=>w.id===r.weekId),label=week?.range||r.weekId;
+      entries.push({label:`${label} · ${r.status||'未填写'}`,report:r});
+      for(const v of r.confirmationHistory||[])entries.push({label:`${label} · 已确认版本`,report:v.report});
+    }
+    for(const v of own.confirmationHistory||[])entries.push({label:'本周 · 已确认版本',report:v.report});
+    if(Object.entries(own).some(([key,value])=>/^(result_explanation|problems_|focus_|support_|undone_|review_|specific_|advice)/.test(key)&&typeof value==='string'&&value.trim()))entries.push({label:'本周旧模板原始填写（保留）',report:{...own,closure_template:0}});
+    return window.ReportItems.historyHTML(entries);
+  }
+  function closureReports(){
+    const report=closureReport(),dept=reportDepartments[state.dept],confirmed=report.status==='已确认',editable=Boolean(state.cloud.session)&&!confirmed;
+    return `${header('部门周报','聚焦待办闭环、协同事项与本周计划，不强制填写经营数据。')}<main class="content report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,x])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${x.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join('')}</div><section class="report-head"><div><span>当前填写</span><h2>${dept.name} · ${current.label}周报</h2><p>周期：${current.range}</p><p>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')} · 保存方式：共享保存，离线时使用本机缓存</p><small class="report-flow">填写后保存草稿，完成后标记已确认；已确认周报可重新编辑，确认版本保留。</small></div><div><span class="report-status ${confirmed?'confirmed':report.status==='草稿'?'draft':''}">${report.status||'未填写'}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${closureHistory(state.dept)}<form class="report-form closure-form" data-report-form><fieldset class="report-edit-fields" ${editable?'':'disabled'}>${window.ReportItems.render(report,confirmed)}</fieldset><div class="sticky-actions"><span>最近保存：${reportTime(report.updatedAt||report.savedAt)}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`;
+  }
   function persistExplains(){try{localStorage.setItem("super_bubble_weekly_lite_explains",JSON.stringify(state.explains))}catch(_){}}
   async function persistMeeting(){
     if(!current||state.cloud.session?.role!=="manager")return;
@@ -177,6 +201,7 @@
   function reportTime(value){const date=value?new Date(value):null;return date&&!Number.isNaN(date.getTime())?date.toLocaleString("zh-CN",{hour12:false}):value||"尚未保存"}
   function meetingReportStatus(status){return status==="草稿"?"草稿 / 未确认":status||"未填写"}
   function reports(){
+    if(isClosureDepartment(state.dept))return closureReports();
     const dept=reportDepartments[state.dept],report=state.reports[state.dept]||{},status=report.status||"未填写",confirmed=status==="已确认",metrics=departmentMetrics(state.dept),problem=common.find(x=>x.key==="problems"),undone=common.find(x=>x.key==="undone");
     const metricNotes=state.dept==="front"?`<p style="margin:10px 0 0;color:#667085;font-size:12px;line-height:1.55">员工个人转化率数据覆盖不完整，不做正式横向比较。当前为抖音主渠道近似口径，不代表精准渠道归因。</p>`:state.dept==="admin"?`<p style="margin:10px 0 0;color:#667085;font-size:12px;line-height:1.55">娃娃/弹珠、袜子/零售、缺货、补货、报修和采购需求暂无可靠自动数据。</p>`:"";
     const metricBlock=metrics.length?`<section class="department-metrics"><div class="department-metrics-title"><div><span>自动数据摘要</span><b>仅展示已有部门专属事实，无需重复抄写</b></div><small>主管只需解释变化</small></div><div class="department-metric-grid">${metrics.map(x=>`<article><span>${x[0]}</span><b>${x[1]}</b><small>${x[2]}</small></article>`).join("")}</div>${metricNotes}</section>`:'<p class="department-empty-metrics" style="margin:0 0 14px"><b>本周暂无可自动归属的现场运营数据，请主管填写关键结果、问题与本周动作。</b></p>';
@@ -189,7 +214,7 @@
     return `${header("部门周报","自动带入已有事实，主管只填写结果、问题、支持与本周动作")}<main class="content report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,x])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${x.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join("")}</div><section class="report-head"><div><span>当前填写</span><h2>${dept.name} · ${current.label}周报</h2><p style="display:flex;flex-wrap:wrap;gap:6px 16px"><span>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')}</span><span>保存方式：Supabase共享保存（离线时使用本机缓存）</span></p><small class="report-flow">填写流程：进入编辑模式 → 填写周报 → 自动保存 / 保存草稿 → 填写完成后标记已确认。</small></div><div><span class="report-status ${status==='已确认'?'confirmed':status==='草稿'?'draft':''}">${status}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${metricBlock}<form class="report-form" data-report-form><fieldset class="report-edit-fields" ${confirmed?'disabled':''}>${keyResult}${problems}${supports}${focuses}${undoneBlock}${advice}${state.dept==="ops"?operationsReviewBlock(state.dept):specificGroupBlocks(dept)}</fieldset><div class="sticky-actions"><span>最近保存：${reportTime(report.updatedAt||report.savedAt)}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`
   }
   function reportItems(deptId,key){return [0,1,2].map(i=>reportValue(deptId,`${key}_${i}`)).filter(Boolean)}
-  function meetingRows(){return Object.entries(reportDepartments).map(([id,dept])=>{const report=state.reports[id]||{};return {id,dept,report,key:keyResults(id),problems:reportItems(id,"problems"),undone:reportItems(id,"undone"),focus:[0,1,2].map(i=>({id:`${id}-${i}`,title:reportValue(id,`focus_${i}_title`),owner:reportValue(id,`focus_${i}_owner`),due:reportValue(id,`focus_${i}_due`),criteria:reportValue(id,`focus_${i}_criteria`)})).filter(x=>x.title),support:[0,1,2].map(i=>({id:`${id}-support-${i}`,target:reportValue(id,`support_${i}_target`),title:reportValue(id,`support_${i}_title`),result:reportValue(id,`support_${i}_result`),due:reportValue(id,`support_${i}_due`)})).filter(x=>x.title)}})}
+  function meetingRows(){return Object.entries(reportDepartments).map(([id,dept])=>{const report=state.reports[id]||{};if(isClosureDepartment(id)&&report.closure_template===1)return {id,dept,report,...window.ReportItems.summary(report,id)};return {id,dept,report,key:keyResults(id),problems:reportItems(id,"problems"),undone:reportItems(id,"undone"),focus:[0,1,2].map(i=>({id:`${id}-${i}`,title:reportValue(id,`focus_${i}_title`),owner:reportValue(id,`focus_${i}_owner`),due:reportValue(id,`focus_${i}_due`),criteria:reportValue(id,`focus_${i}_criteria`)})).filter(x=>x.title),support:[0,1,2].map(i=>({id:`${id}-support-${i}`,target:reportValue(id,`support_${i}_target`),title:reportValue(id,`support_${i}_title`),result:reportValue(id,`support_${i}_result`),due:reportValue(id,`support_${i}_due`)})).filter(x=>x.title)}})}
   function meetingV2(){
     const d=douyinSummary(current),mode=state.meetingMode,rate=ratio(cardCount(current),valid(current)),priorRate=ratio(cardCount(previous),valid(previous));
     const lines=[["门票",current.revenue.ticket-previous.revenue.ticket],["会员新办",current.revenue.newMember-previous.revenue.newMember],["会员续卡",current.revenue.renewal-previous.revenue.renewal],["线上核销",current.revenue.online-previous.revenue.online],["二销",current.revenue.secondary-previous.revenue.secondary],["其他",current.revenue.other-previous.revenue.other],["退款",current.revenue.refund-previous.revenue.refund]];
@@ -223,33 +248,64 @@
     return "";
   }
   function emptyData(){return `${header(state.page==='overview'?'周经营总览':state.page==='frontDouyin'?'前厅与抖音':state.page==='reports'?'部门周报':'周会与老板汇报','本周经营数据尚未发布')}<main class="content"><section class="panel real-data-empty"><span>等待周版本</span><h2>本周经营数据尚未写入网页</h2><p>请由店长把本周Excel交给Codex生成新的静态数据包并发布。门店员工无需自行导入Excel。</p></section></main>`}
-  function validateReportDOM(){if(state.page!=="reports"||!current)return;const expected={"key-result":1,problems:6,support:12,focus:12,undone:9};const result={};for(const [id,minFields] of Object.entries(expected)){const module=document.querySelector(`[data-report-module="${id}"]`),fields=module?[...module.querySelectorAll("input, textarea, select")].filter(x=>!x.disabled).length:0;result[id]={exists:Boolean(module),fields,fillable:fields>=minFields}}const ok=Object.values(result).every(x=>x.exists&&x.fillable);document.documentElement.dataset.reportDomReady=ok?"true":"false";window.__liteReportDomCheck={ok,result};if(!ok)console.error("部门周报核心模块渲染不完整",result)}
+  function validateReportDOM(){if(state.page!=="reports"||!current)return;const closure=isClosureDepartment(state.dept),expected=closure?Object.fromEntries(window.ReportItems.sections.map(s=>[s.key,0])):{"key-result":1,problems:6,support:12,focus:12,undone:9};const result={};for(const [id,minFields] of Object.entries(expected)){const module=document.querySelector(closure?`[data-closure-module="${id}"]`:`[data-report-module="${id}"]`),fields=module?module.querySelectorAll("input, textarea, select").length:0;result[id]={exists:Boolean(module),fields,fillable:fields>=minFields}}const ok=Object.values(result).every(x=>x.exists&&x.fillable);document.documentElement.dataset.reportDomReady=ok?"true":"false";window.__liteReportDomCheck={ok,result};if(!ok)console.error("部门周报核心模块渲染不完整",result)}
   function render(){let body=!current?emptyData():state.page==='overview'?overview():state.page==='frontDouyin'?frontDouyin():state.page==='reports'?reports():meetingV2();app.innerHTML=`<div class="shell ${state.presentation?'presentation':''}">${sidebar()}<div class="workspace">${body}</div></div>${modal()}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;bind();validateReportDOM()}
   function reportDraft(status="草稿"){
     const form=document.querySelector('[data-report-form]');if(!form||!current)return null;
-    const existing=state.reports[state.dept]||{},record={...existing,departmentId:state.dept,weekId:current.id,status,editorName:state.cloud.session?.name||existing.editorName||"未填写"};
+    const existing=state.reports[state.dept]||{};let record={...existing,departmentId:state.dept,weekId:current.id,status,editorName:state.cloud.session?.name||existing.editorName||"未填写"};
     for(const [key,value] of new FormData(form).entries())record[key]=value;
+    if(isClosureDepartment(state.dept))record=window.ReportItems.read(form,record);
     if(status!=="已确认"){record.confirmedBy="";record.confirmedAt=""}
     return record;
   }
-  async function saveReport(status,{silent=false}={}){
+  async function saveReport(status,{silent=false,record:providedRecord=null}={}){
     if(!state.cloud.session){if(!silent){state.authIntent="edit";state.modal="auth";render()}return}
-    const record=reportDraft(status);if(!record)return;
-    state.reports[state.dept]=record;window.CloudSync.cacheReport(state.dept,record);state.cloud.status="saving";
+    const record=providedRecord||reportDraft(status);if(!record)return;
+    const department=record.departmentId||state.dept;
+    if(status==='已确认'){record.confirmedBy=state.cloud.session.name;record.confirmedAt=new Date().toISOString()}
+    state.reports[department]=record;window.CloudSync.cacheReport(department,record);state.cloud.status="saving";
     if(!silent)render();
-    try{const result=await (reportSaveQueue=reportSaveQueue.catch(()=>{}).then(()=>window.CloudSync.saveReport(state.dept,record)));state.reports[state.dept]=result.report;state.cloud.status="synced";state.cloud.lastUpdated=result.report.updatedAt;if(!silent)flash(status==='已确认'?`${reportDepartments[state.dept].name}周报已确认并同步`:'草稿已保存')}
+    try{const result=await (reportSaveQueue=reportSaveQueue.catch(()=>{}).then(()=>window.CloudSync.saveReport(department,record)));if(state.reports[department]===record)state.reports[department]=result.report;state.cloud.status="synced";state.cloud.lastUpdated=result.report.updatedAt;if(!silent)flash(status==='已确认'?`${reportDepartments[department].name}周报已确认并同步`:'草稿已保存')}
     catch(error){state.cloud.status="offline";if(!silent)flash(`${error.message||"周报云端保存失败"}，本机缓存已保留`)}
   }
-  async function reopenReport(){if(!state.cloud.session){state.authIntent="edit";state.modal="auth";render();return}const existing=state.reports[state.dept]||{};if(existing.status!=="已确认")return;state.reports[state.dept]={...existing,status:"草稿",confirmedBy:"",confirmedAt:""};render();await saveReport("草稿");flash('已转为草稿，可继续修改')}
+  async function reopenReport(){if(!state.cloud.session){state.authIntent="edit";state.modal="auth";render();return}const department=state.dept,existing=state.reports[department]||{};if(existing.status!=="已确认")return;try{await window.CloudSync.archiveConfirmed(department,{...existing,weekId:current.id})}catch(error){flash('历史确认版本尚未保存，请联网后再重新编辑');return}const record={...existing,departmentId:department,weekId:current.id,status:"草稿",confirmedBy:"",confirmedAt:""};state.reports[department]=record;render();await saveReport("草稿",{record});flash('已转为草稿，可继续修改')}
+  function bindClosureReport(){
+    if(state.page!=='reports'||!isClosureDepartment(state.dept)||!state.cloud.session||state.reports[state.dept]?.status==='已确认')return;
+    const form=document.querySelector('[data-report-form]');if(!form)return;
+    const change=fn=>{
+      clearTimeout(reportAutosaveTimer);
+      const next=reportDraft('草稿');if(!next)return;
+      fn(next);state.reports[state.dept]=next;
+      window.CloudSync.cacheReport(state.dept,next);render();saveReport('草稿',{silent:true});
+    };
+    form.querySelectorAll('[data-add-closure]').forEach(button=>button.onclick=()=>change(report=>{report[`closure_${button.dataset.addClosure}`].push(window.ReportItems.blank())}));
+    form.querySelector('[data-carry-followups]')?.addEventListener('click',()=>change(report=>Object.assign(report,window.ReportItems.carryFollowups(report))));
+    form.querySelectorAll('[data-delete-row]').forEach(button=>button.onclick=()=>{
+      const el=button.closest('[data-closure-row]'),key=`closure_${el.dataset.section}`,id=el.dataset.closureRow;
+      const row=window.ReportItems.read(form,state.reports[state.dept])[key].find(x=>x.id===id);
+      if(window.ReportItems.filled(row)&&!window.confirm('确认删除本行？已确认的历史版本不受影响。'))return;
+      change(report=>{if(row.source){report.closure_dismissed_sources=[...(report.closure_dismissed_sources||[]),row.source]}report[key]=report[key].filter(x=>x.id!==id)});
+    });
+    const move=(id,target)=>change(report=>{const rows=report.closure_plans,from=rows.findIndex(x=>x.id===id);if(from<0||target<0||target>=rows.length)return;rows.splice(target,0,rows.splice(from,1)[0])});
+    form.querySelectorAll('[data-move-row]').forEach(button=>button.onclick=()=>{const id=button.closest('[data-closure-row]').dataset.closureRow;move(id,state.reports[state.dept].closure_plans.findIndex(x=>x.id===id)+Number(button.dataset.moveRow))});
+    form.querySelectorAll('.closure-drag').forEach(handle=>{handle.ondragstart=event=>{closureDragId=handle.closest('[data-closure-row]').dataset.closureRow;event.dataTransfer.setData('text/plain',closureDragId);event.dataTransfer.effectAllowed='move'};handle.ondragend=()=>{closureDragId=null}});
+    form.querySelectorAll('[data-section="plans"]').forEach(el=>{el.ondragover=event=>{if(closureDragId){event.preventDefault();event.dataTransfer.dropEffect='move'}};el.ondrop=event=>{event.preventDefault();if(!closureDragId)return;const id=closureDragId;closureDragId=null;move(id,state.reports[state.dept].closure_plans.findIndex(x=>x.id===el.dataset.closureRow))}});
+    form.addEventListener('input',event=>{
+      const el=event.target.closest('[data-closure-row]');if(!el)return;
+      const row=window.ReportItems.read(form,state.reports[state.dept])[`closure_${el.dataset.section}`].find(x=>x.id===el.dataset.closureRow),t=window.ReportItems.tone(row,el.dataset.section);
+      el.querySelector('[data-row-title]').textContent=row.title||'待填写事项';const badge=el.querySelector('[data-row-status]');badge.className=`closure-status ${t.color}`;badge.textContent=t.label;
+    });
+  }
   function bindCore(){
-    document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>{state.page=button.dataset.nav;window.scrollTo(0,0);render()});
+    const flushReport=()=>{const pending=reportAutosaveTimer;clearTimeout(reportAutosaveTimer);reportAutosaveTimer=null;if(pending&&state.page==='reports'&&state.cloud.session&&state.reports[state.dept]?.status!=='已确认')saveReport('草稿',{silent:true})};
+    document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>{flushReport();state.page=button.dataset.nav;window.scrollTo(0,0);render()});
     document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>{state.modal=null;render()});
     document.querySelector('[data-edit-mode]')?.addEventListener('click',()=>{if(state.cloud.session){window.CloudSync.logout();state.cloud.session=null;flash('已退出编辑模式')}else{state.authIntent='edit';state.modal='auth';render()}});
     document.querySelector('[data-editor-guide]')?.addEventListener('click',()=>{state.modal='editor-guide';render()});
     document.querySelector('[data-auth-form]')?.addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form)),name=String(data.name||'').trim(),previousName=savedEditorName();if(previousName&&name!==previousName&&!window.confirm(`上次填写人是${previousName}，是否确认改为${name}？`))return;try{localStorage.setItem(EDITOR_NAME_KEY,name)}catch(_){}state.cloud.session=await window.CloudSync.login(data.role,"",name);state.modal=null;flash(`已进入${state.cloud.session.role==='manager'?'店长':'部门'}编辑模式`)});
     document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>{state.tab=button.dataset.tab;render()});
     document.querySelectorAll('[data-rank]').forEach(button=>button.onclick=()=>{state.rank=button.dataset.rank;render()});
-    document.querySelectorAll('[data-dept]').forEach(button=>button.onclick=()=>{state.dept=button.dataset.dept;render()});
+    document.querySelectorAll('[data-dept]').forEach(button=>button.onclick=()=>{flushReport();state.dept=button.dataset.dept;render()});
     document.querySelectorAll('[data-meeting-mode]').forEach(button=>button.onclick=()=>{state.meetingMode=button.dataset.meetingMode;render()});
     document.querySelector('[data-copy-undone]')?.addEventListener('click',async()=>{[0,1,2].forEach(index=>{const from=document.querySelector(`[name="undone_${index}"]`),to=document.querySelector(`[name="focus_${index}_title"]`);if(from?.value&&to&&!to.value)to.value=from.value});await saveReport('草稿')});
     document.querySelector('[data-add-review]')?.addEventListener('click',()=>{const form=document.querySelector('[data-report-form]');if(form){const draft={...(state.reports[state.dept]||{}),departmentId:state.dept,weekId:current.id};for(const [key,value] of new FormData(form).entries())draft[key]=value;state.reports[state.dept]=draft}state.reviewRows[state.dept]=Math.min(5,operationsReviewCount(state.dept)+1);render()});
@@ -294,6 +350,7 @@
   }
   function bind(){
     originalBind();
+    bindClosureReport();
     decorateMeetingReport();
     if(state.page==='meeting'&&state.meetingMode==='boss'){const insights=document.querySelector('.boss-insights'),actions=document.querySelector('.action-summary');if(insights&&actions)actions.before(insights)}
     document.querySelector('[data-presentation]')?.addEventListener('click',()=>{state.presentation=!state.presentation;render()});
@@ -313,7 +370,7 @@
     }
   }
   render();
-  async function applyBootstrap(payload){state.reports=Object.fromEntries((payload?.reports||[]).filter(x=>x.weekId===current?.id).map(x=>[x.departmentId,x]));state.meeting={actions:[],decisions:[],ownerSupport:[],...(payload?.meeting||{})};state.cloud.status=payload?.offline?'offline':'synced';state.cloud.source=payload?.source||'cloud';state.cloud.lastUpdated=payload?.updatedAt||payload?.meeting?.updatedAt||'';render();return true}
+  async function applyBootstrap(payload){historyReports=payload?.reports||[];state.reports=Object.fromEntries(historyReports.filter(x=>x.weekId===current?.id).map(x=>[x.departmentId,x]));state.meeting={actions:[],decisions:[],ownerSupport:[],...(payload?.meeting||{})};state.cloud.status=payload?.offline?'offline':'synced';state.cloud.source=payload?.source||'cloud';state.cloud.lastUpdated=payload?.updatedAt||payload?.meeting?.updatedAt||'';render();return true}
   async function loadCloud(){const payload=await window.CloudSync.bootstrap(weeks);await applyBootstrap(payload);if(payload?.offline&&payload?.error)flash('共享内容读取失败，当前显示本机缓存')}
   loadCloud();
   window.CloudSync.startPolling(weeks);
