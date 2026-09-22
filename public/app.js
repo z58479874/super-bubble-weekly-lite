@@ -186,13 +186,22 @@
   }
   function douyinTopicPage(){
     const topic=douyinTopic(current),prior=douyinTopic(previous),record=douyinTopicNotes();
-    return `${header('抖音经营详情','成交、到店、核销分别统计；不把不同周期事实拼成同批订单转化。')}${window.DouyinTopic?.render(topic,prior,record,{editable:Boolean(state.cloud.session)})||'<main class="content"><p>抖音专题组件未加载。</p></main>'}`;
+    return `${header('抖音经营详情','成交、到店、核销分别统计；不把不同周期事实拼成同批订单转化。')}${window.DouyinTopic?.render(topic,prior,record,{editable:Boolean(state.cloud.session),preface:diagnosticPanel('douyin','本周抖音经营诊断与建议')})||'<main class="content"><section class="panel"><p>抖音专题组件未加载。</p></section></main>'}`;
   }
   function flash(text){state.toast=text;render();setTimeout(()=>{state.toast="";render()},2200)}
   function spark(values){const clean=values.filter(Number.isFinite);if(clean.length<2)return `<span class="spark-empty">${clean.length===1?'单期':'暂无趋势'}</span>`;const min=Math.min(...clean),max=Math.max(...clean),step=68/(clean.length-1),pts=clean.map((v,i)=>`${6+i*step},${32-(v-min)/(max-min||1)*24}`).join(" "),last=pts.split(" ").at(-1).split(",");return `<svg class="spark" viewBox="0 0 80 38" aria-label="最近${clean.length}期趋势"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="${last[0]}" cy="${last[1]}" r="3" fill="currentColor"/></svg>`}
   function metric(label,get,format=x=>x,accent="blue") {const vals=weeks.map(get),c=vals.at(-1),p=vals.at(-2);return `<article class="metric ${accent}"><div class="metric-head"><span>${label}</span>${spark(vals)}</div><strong>${format(c)}</strong><div class="compare"><span>上期 <b>${Number.isFinite(p)?format(p):'暂无'}</b></span>${vals.length>=3?`<span>前一期 <b>${format(vals.at(-3))}</b></span>`:''}</div><div class="metric-foot"><span>较上期</span><b class="${Number.isFinite(c)&&Number.isFinite(p)&&c>=p?"up":"down"}">${delta(c,p)}</b></div></article>`}
   function sidebar(){const status=state.cloud.status==="synced"?"● 周报已同步":state.cloud.status==="saving"?"● 正在保存":state.cloud.status==="loading"?"● 正在读取周报":"● 离线 / 本机缓存";return `<aside class="sidebar"><div class="brand"><i>泡</i><div><strong>超级泡泡</strong><span>周经营看板 Lite</span></div></div><nav>${nav.map(x=>`<button ${x.pending?'disabled':''} class="${state.page===x.id?'active':''}" data-nav="${x.id}"><i>${x.icon}</i><span>${x.label}</span>${x.pending?'<em>待开发</em>':''}</button>`).join("")}</nav><div class="local-note cloud-note"><b>静态经营数据 · 共享周报</b><span class="cloud-state ${state.cloud.status}">${status}</span><small>${weeks.length?`${current.label} · 经营数据随版本发布${state.cloud.lastUpdated?` · 周报更新 ${new Date(state.cloud.lastUpdated).toLocaleString('zh-CN',{hour12:false})}`:''}`:'尚未发布经营数据'}</small><button data-edit-mode>${state.cloud.session?`${state.cloud.session.name} · ${state.cloud.session.role==='manager'?'店长编辑':'编辑模式'}（退出）`:'进入编辑模式'}</button><button class="usage-link" data-editor-guide>使用说明</button></div></aside>`}
   function header(title,sub){return `<header class="topbar"><div><h1>${title}</h1><p>${sub}</p></div><div class="top-actions">${current?`<div class="week-pill"><span>当前经营期</span><b>${current.label} · ${current.range}</b></div>`:''}</div></header>`}
+  function diagnosticItems(scope="all"){
+    const items=window.WeeklyInsights?.build?.({data:D,current,previous})||[];
+    return scope==="all"?items:items.filter(item=>item.domain===scope||item.domain==="quality");
+  }
+  function diagnosticPanel(scope="all",title="本周经营诊断与建议",compact=false){
+    const items=diagnosticItems(scope);
+    if(!items.length)return `<section class="panel diagnostic-panel ${compact?'compact':''}"><div class="panel-title"><div><span>经营诊断 · 供参考</span><h2>${title}</h2><p>缺少完整对比数据，暂不生成强结论。</p></div></div></section>`;
+    return `<section class="panel diagnostic-panel ${compact?'compact':''}" data-diagnostic-scope="${scope}"><div class="panel-title"><div><span>经营诊断 · 供参考</span><h2>${title}</h2><p>规则基于统一周快照生成：只陈述可验证事实与待核实方向，不自动定责。</p></div><small class="diagnostic-rule">${items.length} 项关注点</small></div><div class="diagnostic-grid">${items.map(item=>`<article class="diagnostic-card ${item.priority.toLowerCase()}"><div class="diagnostic-card-head"><span class="diagnostic-priority">${item.priority}</span><b>${item.title}</b></div><p><small>数据事实</small>${item.fact}</p><p><small>经营判断</small>${item.judgement}</p><p><small>建议动作</small>${item.action}</p><details><summary>查看影响与数据依据</summary><p><small>经营影响</small>${item.impact}</p><p><small>数据依据</small>${item.basis}</p></details></article>`).join("")}</div></section>`;
+  }
   function overview(){
     const rate=w=>ratio(cardCount(w),valid(w));
     const mid=w=>ratio(w.cards.c599+w.cards.c999,cardCount(w));
@@ -227,6 +236,8 @@
     const changeDisplay=(x,kind)=>{if(x.key==="refund"){const improved=kind==="growth";return {label:improved?"退款减少":"退款增加",note:improved?"净收入改善":"净收入拖累",amount:`${improved?"+":"-"}${money(Math.abs(x.d))}${improved?"净收入贡献":"净收入拖累"}`};}return {label:x.label,note:kind==="growth"?"较上周增加":"较上周减少",amount:`${kind==="growth"?"+":"-"}${money(Math.abs(x.d))}`};};
     const trendItems=[["净经营营业额",rev,money],["办卡率",rate,x=>pct(x,1)],["抖音核销订单实收",w=>douyinSummary(w).redeemedOrderReceived,money],["入园家庭",w=>w.admission,x=>`${x}户`]];
     const periodNames=weeks.map((_,index)=>index===weeks.length-1?"本期":index===weeks.length-2?"上期":`${weeks.length-index-1}期前`);
+    const diagnosis=diagnosticItems();
+    const diagnosisHeadline=window.WeeklyInsights?.headline?.(diagnosis)||"数据已加载；暂无足够的对比期数据生成经营诊断。";
     const explainItems=[
       {key:"refund",title:"退款金额变化较大",fact:`退款由上周 ${money(Math.abs(previous.revenue.refund))} 变为 ${money(Math.abs(current.revenue.refund))}，请前厅说明跨周退款及确认口径。`},
       {key:"conversion",title:"增长主要来自转化与客单",fact:`入园家庭环比 ${delta(current.admission,previous.admission)}，营业额环比 ${revenueWow}，请主管说明改善动作能否持续。`}
@@ -236,9 +247,10 @@
       <main class="content overview-page">
         <section class="weekly-judgement">
           <div class="judgement-kicker"><span>本周经营判断</span><em>数据自动生成 · 不自动定责</em></div>
-          <p>本周退款后净营业额 <b>${money(rev(current))}</b>，较上周 <b class="up">${revenueWow}</b>，目标完成率 <b>${pct(ratio(rev(current),current.target),1)}</b>；<b>正向贡献主要来自${judgementGrowthNames}。</b><span>最需要说明：退款金额变化较大，请前厅说明跨周退款及确认口径。</span></p>
+          <p>${diagnosisHeadline}</p>
           <div class="judgement-meta"><span><i></i>经营结果：${ratio(rev(current),current.target)>=100?'达到目标':'未达目标'}</span><span>增长来源：${growthNames}</span><span>静态经营数据 · ${weeks.length}期</span></div>
         </section>
+        ${diagnosticPanel("all","本周经营诊断与建议")}
         <section class="core-kpis">${coreCards}</section>
         <section class="analysis-first">
           <article class="panel compact-analysis revenue-structure"><div class="panel-title"><div><h2>收入结构</h2><p>口径已对齐：退款后净额 + 抖音核销订单实收</p></div><span class="check ${current.ops.reconciled?'':'danger'}">${current.ops.reconciled?'✓ 已对齐':`收入未对账 ${money(Math.abs(current.ops.reconciliationDifference))}`}</span></div><div class="revenue-groups">${revenueGroups.map(group=>`<section class="revenue-group"><h3>${group.label}</h3>${group.items.map(x=>{const comparison=revenueComparison(x),change=Number.isFinite(x.c)&&Number.isFinite(x.p)?x.c-x.p:null;return `<div class="revenue-row"><span>${x.label}</span><div class="revenue-values"><b class="${Number.isFinite(x.c)?'':'missing'}">${revenueValue(x)}</b>${comparison?`<em class="${change>=0?'up':'down'}">${comparison}</em>`:''}</div></div>`}).join("")}</section>`).join("")}</div><div class="revenue-total"><span>退款后净经营营业额</span><b>${money(rev(current))}</b></div><p class="revenue-note">经营营业额按退款后净额统计；抖音收入按有效核销订单实收计入。</p></article>
@@ -285,7 +297,7 @@
       <section class="panel light-panel douyin-explain"><div><span>本期抖音需要说明</span><b>本期成交、核销、到店和办卡来自不同时间事实，仅用于经营趋势观察，不用于计算同批订单严格转化率。</b></div><small>本期售后申请 ${d.refundOrders??'未统计'} 笔，不能等同于本期实际退款。</small></section>
     </section>`;
   }
-  function frontDouyin(){return `${header("前厅与抖音","主管周会版：先看门店转化，再看线上是否真实带来到店办卡")}<main class="content weekly-detail-page">${front()}${douyin()}</main>`}
+  function frontDouyin(){return `${header("前厅与抖音","主管周会版：先看门店转化，再看线上是否真实带来到店办卡")}<main class="content weekly-detail-page">${front()}${diagnosticPanel("front","前厅经营诊断与建议",true)}${douyin()}${diagnosticPanel("douyin","抖音经营诊断与建议",true)}</main>`}
   const common=[{key:"undone",label:"5. 上周未完成事项及原因",limit:3,placeholder:"未完成事项｜原因｜下一步"},{key:"problems",label:"2. 本部门前三项问题",limit:3,placeholder:"问题事实｜影响"}];
   const reportDepartments={
     ops:{id:"ops",name:"现场运营部"},
@@ -564,12 +576,19 @@
     const riskCount=document.querySelectorAll(".boss-insights article:last-child p").length;
     if(riskTitle)riskTitle.textContent=`本周主要问题（${riskCount}项）`;
   }
+  function decorateMeetingDiagnosis(){
+    if(state.page!=="meeting")return;
+    const anchor=document.querySelector('.meeting-core-grid');
+    if(!anchor||document.querySelector('[data-diagnostic-scope="all"]'))return;
+    anchor.insertAdjacentHTML('beforebegin',diagnosticPanel('all',state.meetingMode==='boss'?'本周经营诊断（供老板决策参考）':'本周经营诊断（供主管会复盘）',true));
+  }
   function bind(){
     originalBind();
     bindClosureReport();
     bindFrontReport();
     bindDouyinTopic();
     decorateMeetingReport();
+    decorateMeetingDiagnosis();
     if(state.page==='meeting'&&state.meetingMode==='boss'){const insights=document.querySelector('.boss-insights'),actions=document.querySelector('.action-summary');if(insights&&actions)actions.before(insights)}
     document.querySelector('[data-presentation]')?.addEventListener('click',()=>{state.presentation=!state.presentation;render()});
     document.querySelector('[data-print]')?.addEventListener('click',()=>window.print());
