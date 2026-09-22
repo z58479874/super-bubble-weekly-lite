@@ -5,7 +5,7 @@ import { buildDouyinTopics, readWorkbookRows, sourceType } from "./lib/douyin-to
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const inputPaths = process.argv.slice(2).filter((item) => item !== "--").map((item) => path.resolve(item));
-if (inputPaths.length !== 4) throw new Error("请依次传入直播、商品、订单成交明细、核销明细4个Excel文件。");
+if (inputPaths.length < 4 || inputPaths.length > 5) throw new Error("请传入直播、商品、订单成交明细、核销明细，以及可选的售后明细Excel文件。");
 
 const existingSource = await readFile(path.join(root, "public", "data.js"), "utf8");
 const match = existingSource.match(/window\.LITE_DATA\s*=\s*([\s\S]*);\s*$/);

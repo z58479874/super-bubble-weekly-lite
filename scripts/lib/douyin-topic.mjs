@@ -97,6 +97,7 @@ export function sourceType(rows) {
   const headers = new Set(Object.keys(rows[0] || {}));
   if (headers.has("直播ID") && headers.has("直播间成交金额")) return "live";
   if (headers.has("商品ID") && headers.has("商品成交金额") && headers.has("投放渠道")) return "product";
+  if (headers.has("售后编号") && (headers.has("售后完成时间") || headers.has("发起申请时间")) && !headers.has("用户实付")) return "aftersales";
   if (headers.has("订单编号") && headers.has("下单时间") && headers.has("订单状态")) return "orders";
   if (headers.has("订单编号") && headers.has("券码（已撤销核销加密）") && headers.has("核销状态")) return "redemptions";
   return "unknown";
@@ -116,9 +117,10 @@ const channelOf = (row) => {
 function normalizeInputs(input) {
   const live = (input.live || []).map((row) => ({ ...row, __day: dayOf(row["开播日期"]), __time: timestamp(row["开播时间"] || row["开播日期"]), __hour: dateParts(row["开播时间"] || row["开播日期"])?.hour ?? 0 }));
   const product = (input.product || []).map((row) => ({ ...row, __day: dayOf(row["天"]) }));
-  const orders = (input.orders || []).map((row) => ({ ...row, __day: dayOf(row["下单时间"]), __time: timestamp(row["下单时间"]), __channel: channelOf(row) }));
+  const orders = (input.orders || []).map((row) => ({ ...row, __day: dayOf(row["支付时间"]), __time: timestamp(row["支付时间"]), __channel: channelOf(row) }));
   const redemptions = (input.redemptions || []).map((row) => ({ ...row, __day: dayOf(row["核销时间"]), __time: timestamp(row["核销时间"]), __orderDay: dayOf(row["下单时间"]), __channel: channelOf(row) }));
-  return { live, product, orders, redemptions };
+  const aftersales = (input.aftersales || []).map((row) => ({ ...row, __day: dayOf(row["售后完成时间"]), __time: timestamp(row["售后完成时间"]) }));
+  return { live, product, orders, redemptions, aftersales };
 }
 
 function aggregateLive(rows) {
@@ -191,6 +193,19 @@ function aggregateOrders(rows) {
     channel: row.__channel, role: text(row["带货角色"]), promoter: text(row["带货人"]) || text(row["达人昵称"]), status: text(row["订单状态"])
   }));
   return { orders, byId: new Map(orders.map((row) => [row.id, row])), duplicateIds };
+}
+
+function aggregateAftersales(rows) {
+  const seen = new Set();
+  const records = [];
+  for (const row of rows) {
+    const id = text(row["售后编号"]);
+    const status = text(row["售后状态"]);
+    if (!id || seen.has(id) || (status && status !== "已退款")) continue;
+    seen.add(id);
+    records.push({ id, day: row.__day, amount: number(row["退款金额"]), vouchers: number(row["退款券数"]), orderId: text(row["订单编号"]), status });
+  }
+  return { records, applications: records.length, amount: sum(records, "amount"), vouchers: sum(records, "vouchers") };
 }
 
 function aggregateRedemptions(rows, productControl) {
@@ -278,7 +293,9 @@ function cohort7d(week, orders, redemptions, cutoff) {
 }
 
 function statusFor(week, quality, coverage) {
-  if (!coverage.live || !coverage.product || !coverage.orders || !coverage.redemptions) return { level: "insufficient", label: "数据不足", message: "核心数据源未完整覆盖本周期。" };
+  const labels = { live: "直播", product: "商品", orders: "订单", redemptions: "核销", aftersales: "售后" };
+  const missing = Object.entries(coverage).filter(([, covered]) => !covered).map(([key]) => labels[key]);
+  if (missing.length) return { level: "insufficient", label: "数据不足", message: `缺少${missing.join("、")}数据或未完整覆盖本周期，相关指标显示数据不足。` };
   if (week.isPartialWeek) return { level: "observe", label: "观察", message: "非完整自然周，不做强环比结论。" };
   if (!quality.productReconciled || quality.unmatchedRedemptionOrders > 0 || quality.exactDuplicateCandidates > 0 || quality.productRefundAnomalies > 0) return { level: "observe", label: "需关注", message: "存在需核对的数据质量提示，结论仅供经营观察。" };
   return { level: "normal", label: "正常", message: "核心数据覆盖完整，金额口径已完成基础对账。" };
@@ -306,18 +323,19 @@ function diagnosis(topic, previousTopic) {
   return `直播成交表现平稳，当前已记录核销订单实收 ${Math.round(topic.fulfillment.redeemedAmount || 0).toLocaleString("zh-CN")} 元；继续以成熟订单的7天到店率判断成交质量。`;
 }
 
-export function buildDouyinTopics({ weeks, live = [], product = [], orders = [], redemptions = [] }) {
-  const data = normalizeInputs({ live, product, orders, redemptions });
+export function buildDouyinTopics({ weeks, live = [], product = [], orders = [], redemptions = [], aftersales = [] }) {
+  const data = normalizeInputs({ live, product, orders, redemptions, aftersales });
   const allProducts = aggregateProducts(data.product);
   const allOrders = aggregateOrders(data.orders);
   const allRedemptions = aggregateRedemptions(data.redemptions, allProducts.totalRedeemedAmount);
-  const sourceCutoff = [data.live, data.product, data.orders, data.redemptions].flatMap((rows) => rows.map((row) => row.__day).filter(Boolean)).sort().at(-1) || null;
+  const sourceCutoff = [data.live, data.product, data.orders, data.redemptions, data.aftersales].flatMap((rows) => rows.map((row) => row.__day).filter(Boolean)).sort().at(-1) || null;
   const topics = {};
   for (const week of weeks) {
     const liveRows = data.live.filter((row) => inPeriod(row.__day, week));
     const productRows = data.product.filter((row) => inPeriod(row.__day, week));
     const orderRows = allOrders.orders.filter((row) => inPeriod(row.day, week));
     const redemptionRows = allRedemptions.records.filter((row) => inPeriod(row.day, week));
+    const afterSales = aggregateAftersales(data.aftersales.filter((row) => inPeriod(row.__day, week)));
     const products = aggregateProducts(productRows);
     const liveFacts = aggregateLive(liveRows);
     const matched = redemptionRows.filter((row) => allOrders.byId.has(row.orderId));
@@ -328,7 +346,8 @@ export function buildDouyinTopics({ weeks, live = [], product = [], orders = [],
       live: sourceCoverage(data.live, "__day", week).complete,
       product: sourceCoverage(data.product, "__day", week).complete,
       orders: sourceCoverage(data.orders, "__day", week).complete,
-      redemptions: sourceCoverage(data.redemptions, "__day", week).complete
+      redemptions: sourceCoverage(data.redemptions, "__day", week).complete,
+      aftersales: sourceCoverage(data.aftersales, "__day", week).complete
     };
     const orderAmounts = {
       paidOrders: orderRows.length, userPaid: sum(orderRows, "userPaid"), orderReceived: sum(orderRows, "orderReceived"), expectedIncome: sum(orderRows, "expectedIncome"), refund: sum(orderRows, "refund"),
@@ -336,7 +355,7 @@ export function buildDouyinTopics({ weeks, live = [], product = [], orders = [],
     };
     const topic = {
       schemaVersion: "douyin-topic-v1", period: { id: week.id, startDate: week.startDate, endDate: week.endDate, isPartialWeek: Boolean(week.isPartialWeek), dataAsOf: sourceCutoff },
-      live: liveFacts, products, orders: orderAmounts,
+      live: liveFacts, products, orders: orderAmounts, aftersales: { applications: afterSales.applications, amount: afterSales.amount, vouchers: afterSales.vouchers, periodBasis: "售后完成时间" },
       fulfillment: {
         redemptionRecords: redemptionRows.length, redeemedVouchers: new Set(redemptionRows.map((row) => `${row.orderId}|${row.voucher}`).filter((key) => !key.endsWith("|"))).size || redemptionRows.length,
         redeemedOrders: new Set(redemptionRows.map((row) => row.orderId)).size, redeemedAmount: sum(redemptionRows, "orderReceived"), expectedIncome: sum(redemptionRows, "expectedIncome"),
@@ -358,5 +377,5 @@ export function buildDouyinTopics({ weeks, live = [], product = [], orders = [],
   }
   const ordered = weeks.map((week) => topics[week.id]);
   ordered.forEach((topic, index) => { topic.diagnosis = diagnosis(topic, ordered[index - 1]); });
-  return { topics, dataAsOf: sourceCutoff, sourceCounts: { live: data.live.length, product: data.product.length, orders: data.orders.length, redemptions: data.redemptions.length } };
+  return { topics, dataAsOf: sourceCutoff, sourceCounts: { live: data.live.length, product: data.product.length, orders: data.orders.length, redemptions: data.redemptions.length, aftersales: data.aftersales.length } };
 }

@@ -23,11 +23,11 @@
 
   function summary(topic, previous) {
     if (!topic) return noData("尚未生成本周抖音专题数据");
-    const p = previous || {}, order = topic.orders, fulfillment = topic.fulfillment, live = topic.live, previousOrder = p.orders || {}, previousFulfillment = p.fulfillment || {}, previousLive = p.live || {};
+    const p = previous || {}, order = topic.orders, aftersales = topic.aftersales || {}, fulfillment = topic.fulfillment, live = topic.live, previousOrder = p.orders || {}, previousAftersales = p.aftersales || {}, previousFulfillment = p.fulfillment || {}, previousLive = p.live || {};
     return `<section class="panel douyin-topic-summary"><div class="panel-title"><div><h2>本周抖音经营专题</h2><p>${esc(topic.status?.message || "按订单、核销、直播和商品四类事实分别统计。")} </p></div><div class="dy-summary-title-side">${statusTag(topic.status)}<button data-open-douyin-topic>查看抖音经营详情</button></div></div>
       <div class="dy-topic-summary-grid">
         ${metric("抖音用户实付", order.userPaid, previousOrder.userPaid, money)}
-        ${metric("抖音退款金额", order.refund, previousOrder.refund, money, { invert: true })}
+        ${metric("本期售后完成退款", aftersales.amount, previousAftersales.amount, money, { invert: true, note: aftersales.periodBasis ? "按售后完成时间" : "售后数据未同步" })}
         ${metric("订单保留金额", order.retained, previousOrder.retained, money)}
         ${metric("已记录核销订单实收", fulfillment.redeemedAmount, previousFulfillment.redeemedAmount, money)}
         ${metric("直播成交金额", live.gmv, previousLive.gmv, money)}
@@ -37,7 +37,7 @@
         ${metric("核销订单数", fulfillment.redeemedOrders, previousFulfillment.redeemedOrders, value => integer(value, "单"), { count: true })}
         ${metric("7天到店率", fulfillment.sevenDay?.rate, previousFulfillment.sevenDay?.rate, value => percent(value, 1), { rate: true, note: fulfillment.sevenDay?.matureOrders ? `${fulfillment.sevenDay.matureOrders}单已满7天` : "订单尚未成熟" })}
         ${metric("观看到成交转化率", live.viewToPurchase, previousLive.viewToPurchase, value => percent(value, 2), { rate: true })}
-        ${metric("退款率", order.refund && order.userPaid ? order.refund / order.userPaid * 100 : null, previousOrder.refund && previousOrder.userPaid ? previousOrder.refund / previousOrder.userPaid * 100 : null, value => percent(value, 2), { rate: true, invert: true })}
+        ${metric("订单退款率（支付期）", order.refund && order.userPaid ? order.refund / order.userPaid * 100 : null, previousOrder.refund && previousOrder.userPaid ? previousOrder.refund / previousOrder.userPaid * 100 : null, value => percent(value, 2), { rate: true, invert: true, note: "与售后完成退款分开统计" })}
       </div>
       <div class="dy-topic-diagnosis"><b>本周抖音一句话诊断</b><p>${esc(topic.diagnosis || "数据持续积累中。")}</p></div></section>`;
   }
@@ -59,9 +59,9 @@
   }
 
   function valueChain(topic) {
-    const order = topic.orders, fulfillment = topic.fulfillment;
+    const order = topic.orders, aftersales = topic.aftersales || {}, fulfillment = topic.fulfillment;
     return `<section class="dy-topic-section" id="dy-chain"><div class="dy-section-head"><div><span>03</span><h2>成交到到店价值链</h2><p>成交与核销是不同日期事实。本周核销总额不能直接除以本周成交额作为同批订单核销率。</p></div></div><div class="dy-value-chain">
-      ${[["本期用户实付", money(order.userPaid)], ["已退款", money(order.refund)], ["订单保留金额", money(order.retained)], ["本周购买且本周核销", money(fulfillment.currentPurchaseCurrentRedemption)], ["此前购买、本周核销", money(fulfillment.priorPurchaseCurrentRedemption)], ["订单表未覆盖的本周核销", money(fulfillment.unmatchedPurchaseCurrentRedemption)], ["本周已记录到店核销", money(fulfillment.redeemedAmount)], ["7天内到店核销", money(fulfillment.sevenDay?.redeemedAmount)], ["7天到店率", percent(fulfillment.sevenDay?.rate, 1)]].map(([label, value], index) => `<article><i>${index + 1}</i><span>${label}</span><b>${value}</b></article>`).join("")}
+      ${[["本期用户实付", money(order.userPaid)], ["订单表退款记录（仅对账）", money(order.refund)], ["订单保留金额", money(order.retained)], ["本期售后完成退款", money(aftersales.amount)], ["本周购买且本周核销", money(fulfillment.currentPurchaseCurrentRedemption)], ["此前购买、本周核销", money(fulfillment.priorPurchaseCurrentRedemption)], ["订单表未覆盖的本周核销", money(fulfillment.unmatchedPurchaseCurrentRedemption)], ["本周已记录到店核销", money(fulfillment.redeemedAmount)], ["7天内到店核销", money(fulfillment.sevenDay?.redeemedAmount)], ["7天到店率", percent(fulfillment.sevenDay?.rate, 1)]].map(([label, value], index) => `<article><i>${index + 1}</i><span>${label}</span><b>${value}</b></article>`).join("")}
     </div><p class="dy-chain-note">${esc(fulfillment.sevenDay?.note || "7天同批到店数据持续积累中。")} 订单表未覆盖的历史购买订单会单列显示，避免把此前购买误归为本期成交。</p></section>`;
   }
 
@@ -77,7 +77,8 @@
       [q.productReconciled ? "已对平" : "需核对", `核销订单实收与商品核销金额：${q.productReconciled ? "已对平" : `差异 ${money(q.productDifference)}`}`],
       [q.multiVoucherOrders ? "需关注" : "正常", `多券订单：${integer(q.multiVoucherOrders, "笔")}`],
       [q.unmatchedRedemptionOrders ? "需核对" : "正常", `核销订单未在本次订单表匹配：${integer(q.unmatchedRedemptionOrders, "笔")}`],
-      [q.productRefundAnomalies ? "需核对" : "正常", `商品退款超过本期商品成交的票型：${integer(q.productRefundAnomalies, "个")}`]
+      [q.productRefundAnomalies ? "需核对" : "正常", `商品退款超过本期商品成交的票型：${integer(q.productRefundAnomalies, "个")}`],
+      [q.coverage?.aftersales ? "正常" : "数据不足", q.coverage?.aftersales ? "售后完成退款数据：已覆盖本周期" : "缺少售后完成退款数据，退款指标不完整"]
     ];
     return `<section class="dy-topic-section dy-quality" id="dy-quality"><div class="dy-section-head"><div><span>05</span><h2>数据质量检查</h2><p>发现问题只标记需核对，不自动篡改任何源表事实。</p></div></div><div class="dy-quality-grid">${issues.map(([status, label]) => `<div class="${status === "正常" || status === "已对平" ? "pass" : "warn"}"><b>${status}</b><span>${label}</span></div>`).join("")}</div><p class="dy-quality-note">${esc(q.dedupeNote || "")} 核销撤销记录已排除 ${integer(q.redemptionReversed, "行")}；数据截至 ${esc(q.sourceCutoff || "未统计")}。</p></section>`;
   }
