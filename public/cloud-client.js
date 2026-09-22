@@ -2,11 +2,9 @@
   const TABLE = "weekly_report_edits";
   const CACHE_PREFIX = "super_bubble_lite_weekly_report_edits_v1:";
   const USER_KEY = "super_bubble_weekly_lite_editor_v1";
-  const POLL_INTERVAL = 4000;
+  const LOCAL_DRAFT_PREFIX = "super_bubble_lite_unsynced_report_draft_v1:";
   const config = window.LITE_RUNTIME_CONFIG || {};
   const listeners = new Set();
-  let pollingTimer = null;
-  let pollingWeeks = [];
 
   const session = () => {
     try { return JSON.parse(sessionStorage.getItem(USER_KEY) || "null"); } catch (_) { return null; }
@@ -15,6 +13,7 @@
   const reportId = (week) => week?.reportId || `${String(week?.startDate || "").replaceAll("-", "")}-${String(week?.endDate || "").replaceAll("-", "")}`;
   const recentWeeks = (weeks = window.LITE_DATA?.weeks || []) => weeks.slice(-4);
   const cacheKey = (id) => `${CACHE_PREFIX}${id}`;
+  const localDraftKey = (reportId, department) => `${LOCAL_DRAFT_PREFIX}${reportId}:${department}`;
   const rowKey = (row) => [row.report_id, row.department, row.section, row.item_key].join("|");
   const dbStatus = (status) => status === "已确认" ? "confirmed" : status === "草稿" ? "draft" : "empty";
   const uiStatus = (status) => status === "confirmed" ? "已确认" : status === "draft" ? "草稿" : "未填写";
@@ -86,7 +85,7 @@
     return Array.isArray(data) ? data : [];
   }
 
-  async function upsertRows(rows) {
+  async function upsertRows(rows, { keepalive = false } = {}) {
     assertConfigured();
     if (!rows.length) return [];
     const url = new URL(`${config.supabaseUrl.replace(/\/$/, "")}/rest/v1/${TABLE}`);
@@ -95,17 +94,11 @@
       method: "POST",
       headers: headers({ Prefer: "resolution=merge-duplicates,return=representation" }),
       body: JSON.stringify(serverRows(rows)),
+      keepalive,
     });
     const data = await response.json().catch(() => []);
     if (!response.ok) throw new Error(data?.message || data?.error || `共享内容保存失败（${response.status}）`);
     return Array.isArray(data) && data.length ? data : rows;
-  }
-
-  async function syncPending() {
-    const rows = pendingRows();
-    if (!rows.length) return;
-    const saved = await upsertRows(rows);
-    mergeCachedRows(saved.map((row) => ({ ...row, _pending: false })));
   }
 
   function reportRows(department, record, now = new Date().toISOString()) {
@@ -180,7 +173,6 @@
   async function bootstrap(weeks = recentWeeks()) {
     const retained = recentWeeks(weeks);
     try {
-      await syncPending();
       const rows = await fetchRows(retained);
       replaceCachedRows(rows, retained);
       return { ...assemble(rows, retained), source: "cloud", offline: false };
@@ -189,27 +181,26 @@
     }
   }
 
-  async function poll() {
-    if (document.visibilityState !== "visible" || !pollingWeeks.length) return;
-    if (document.activeElement?.closest?.('[data-report-form],[data-meeting-action-form]')) return;
+  function saveLocalDraft(department, record) {
+    const id = record.reportId || reportId((window.LITE_DATA?.weeks || []).find((week) => week.id === record.weekId));
+    if (!id || !department) return;
+    try { localStorage.setItem(localDraftKey(id, department), JSON.stringify({ record, savedAt: new Date().toISOString() })); } catch (_) {}
+  }
+
+  function getLocalDraft(department, weekId) {
+    const id = reportId((window.LITE_DATA?.weeks || []).find((week) => week.id === weekId));
+    if (!id || !department) return null;
     try {
-      await syncPending();
-      const rows = await fetchRows(pollingWeeks);
-      replaceCachedRows(rows, pollingWeeks);
-      notify({ type: "remote", payload: { ...assemble(rows, pollingWeeks), source: "cloud", offline: false } });
-    } catch (_) {}
+      const value = JSON.parse(localStorage.getItem(localDraftKey(id, department)) || "null");
+      return value?.record ? value : null;
+    } catch (_) { return null; }
   }
 
-  function startPolling(weeks = recentWeeks()) {
-    pollingWeeks = recentWeeks(weeks);
-    if (pollingTimer) clearInterval(pollingTimer);
-    pollingTimer = setInterval(poll, POLL_INTERVAL);
-    return () => { if (pollingTimer) clearInterval(pollingTimer); pollingTimer = null; };
+  function clearLocalDraft(department, weekId) {
+    const id = reportId((window.LITE_DATA?.weeks || []).find((week) => week.id === weekId));
+    if (!id || !department) return;
+    try { localStorage.removeItem(localDraftKey(id, department)); } catch (_) {}
   }
-
-  window.addEventListener("focus", poll);
-  window.addEventListener("online", poll);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });
 
   window.CloudSync = {
     cachePrefix: CACHE_PREFIX,
@@ -224,7 +215,8 @@
     },
     logout() { sessionStorage.removeItem(USER_KEY); notify({ type: "session", session: null }); },
     bootstrap,
-    startPolling,
+    // 保留空实现避免旧页面调用；Lite 不再轮询或自动提交周报。
+    startPolling() { return () => {}; },
     async archiveConfirmed(department,record){
       if(record.status!=='已确认')return;
       const fixed={...record,confirmedAt:record.confirmedAt||record.updatedAt||new Date().toISOString(),confirmedBy:record.confirmedBy||record.editorName||session()?.name};
@@ -232,11 +224,14 @@
       const saved=await upsertRows(rows);mergeCachedRows(saved.map(row=>({...row,_pending:false})));
     },
     cacheReport(department, record) { mergeCachedRows(reportRows(department, record).map((row) => ({ ...row, _pending: true }))); },
+    saveLocalDraft,
+    getLocalDraft,
+    clearLocalDraft,
     cacheMeeting(record) { mergeCachedRows(meetingRows(record).map((row) => ({ ...row, _pending: true }))); },
-    async saveReport(department, record) {
+    async saveReport(department, record, options = {}) {
       const rows = reportRows(department, record);
       mergeCachedRows(rows.map((row) => ({ ...row, _pending: true })));
-      const saved = await upsertRows(rows);
+      const saved = await upsertRows(rows, options);
       mergeCachedRows(saved.map((row) => ({ ...row, _pending: false })));
       const payload = assemble(readCachedRows(recentWeeks()), recentWeeks());
       const report = payload.reports.find((item) => item.departmentId === department && item.weekId === record.weekId) || { ...record, updatedAt: new Date().toISOString() };

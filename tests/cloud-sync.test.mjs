@@ -85,17 +85,17 @@ test("云端优先读取，失败时回退本机缓存", async () => {
   networkFails = false;
 });
 
-test("离线修改保留为待同步，网络恢复后自动补写", async () => {
-  networkFails = true;
+test("离线草稿只保存在本机，重新读取不会自动写入云端", async () => {
   const record = { departmentId: "front", weekId: "period-b", status: "草稿", result_explanation: "离线修改" };
-  window.CloudSync.cacheReport("front", record);
-  await assert.rejects(window.CloudSync.saveReport("front", record));
-  const cached = JSON.parse(localStorage.getItem("super_bubble_lite_weekly_report_edits_v1:20260907-20260913"));
-  assert.ok(cached.some((row) => row.item_key === "result_explanation" && row._pending));
-  networkFails = false;
-  const recovered = await window.CloudSync.bootstrap(weeks);
-  assert.equal(recovered.reports.find(r=>r.departmentId==='front'&&r.weekId==='period-b').result_explanation, "离线修改");
-  assert.ok(serverRows.some((row) => row.item_key === "result_explanation" && row.value === "离线修改"));
+  window.CloudSync.saveLocalDraft("front", record);
+  const local = window.CloudSync.getLocalDraft("front", "period-b");
+  assert.equal(local.record.result_explanation, "离线修改");
+  const before = serverRows.filter((row) => row.item_key === "result_explanation" && row.value === "离线修改").length;
+  await window.CloudSync.bootstrap(weeks);
+  const after = serverRows.filter((row) => row.item_key === "result_explanation" && row.value === "离线修改").length;
+  assert.equal(after, before);
+  window.CloudSync.clearLocalDraft("front", "period-b");
+  assert.equal(window.CloudSync.getLocalDraft("front", "period-b"), null);
 });
 
 test("店长周会内容使用同一张表", async () => {

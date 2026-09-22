@@ -4,11 +4,45 @@
   let savedExplains={};try{savedExplains=JSON.parse(localStorage.getItem("super_bubble_weekly_lite_explains")||"{}")}catch(_){}
   const EDITOR_NAME_KEY="super_bubble_weekly_lite_editor_name";
   const savedEditorName=()=>{try{return localStorage.getItem(EDITOR_NAME_KEY)||""}catch(_){return ""}};
-  const state={page:"overview",tab:"front",dept:"ops",rank:"rate",modal:null,reports:{},reviewRows:{ops:0},meetingMode:"supervisor",presentation:false,meetingEditor:null,meeting:{actions:[],decisions:[],ownerSupport:[]},toast:"",explains:{...explainDefaults,...savedExplains},authIntent:"edit",cloud:{status:"loading",source:"notes",lastUpdated:"",session:window.CloudSync?.session?.()||null}};
-  let reportAutosaveTimer=null,reportSaveQueue=Promise.resolve();
+  const state={page:"overview",tab:"front",dept:"ops",rank:"rate",modal:null,reports:{},reportEdits:{},pendingNavigation:null,focusAfterRender:null,reviewRows:{ops:0},meetingMode:"supervisor",presentation:false,meetingEditor:null,meeting:{actions:[],decisions:[],ownerSupport:[]},toast:"",explains:{...explainDefaults,...savedExplains},authIntent:"edit",cloud:{status:"loading",source:"notes",lastUpdated:"",session:window.CloudSync?.session?.()||null}};
+  let reportSaveQueue=Promise.resolve();
   let historyReports=[],closureDragId=null;
   const isClosureDepartment=id=>id==='ops'||id==='admin';
+  const cloneRecord=value=>JSON.parse(JSON.stringify(value||{}));
+  const reportEditKey=(department=state.dept,week=current)=>`${week?.id||""}|${department}`;
+  function reportEdit(department=state.dept){
+    const key=reportEditKey(department);
+    if(!state.reportEdits[key])state.reportEdits[key]={dirty:false,saving:false,failed:false,lastSavedAt:"",baseRecord:null,recovery:null,sessionDraft:false};
+    return state.reportEdits[key];
+  }
+  function shortSaveTime(value){const date=value?new Date(value):null;return date&&!Number.isNaN(date.getTime())?date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}):''}
+  function reportSaveText(department=state.dept){const edit=reportEdit(department),report=state.reports[department]||{};if(edit.saving)return '正在保存';if(edit.failed)return '保存失败，请重试';if(edit.dirty)return '有未保存修改';const time=edit.lastSavedAt||report.updatedAt||report.savedAt;return time?`已保存 · ${shortSaveTime(time)}`:'已保存'}
+  function updateReportSaveUi(){
+    const edit=reportEdit(),report=state.reports[state.dept]||{},status=report.status||'未填写';
+    document.querySelectorAll('[data-save-status]').forEach(node=>node.textContent=reportSaveText());
+    document.querySelectorAll('[data-report-status]').forEach(node=>{node.textContent=status;node.className=`report-status ${status==='已确认'?'confirmed':status==='草稿'?'draft':''}`});
+  }
+  function markReportDirty(record,department=state.dept){
+    if(!record||!current)return;
+    const edit=reportEdit(department);
+    if(!edit.baseRecord)edit.baseRecord=cloneRecord(state.reports[department]||{});
+    edit.dirty=true;edit.failed=false;edit.sessionDraft=true;state.reports[department]=record;
+    window.CloudSync?.saveLocalDraft(department,record);
+    updateReportSaveUi();
+  }
+  function restoreLocalDraft(department){
+    if(!current||!window.CloudSync?.getLocalDraft)return;
+    const edit=reportEdit(department),draft=window.CloudSync.getLocalDraft(department,current.id);
+    if(!draft?.record||edit.sessionDraft||edit.recovery)return;
+    edit.baseRecord=cloneRecord(state.reports[department]||{});
+    edit.recovery=draft;edit.dirty=true;state.reports[department]=draft.record;
+  }
+  function reportRecoveryNotice(){
+    const edit=reportEdit();if(!edit.recovery)return '';
+    return `<section class="report-draft-recovery"><div><b>检测到未同步草稿</b><span>已恢复本机填写内容，尚未覆盖服务器已有内容。</span></div><div><button type="button" class="ghost" data-discard-local-draft>放弃本地草稿</button><button type="button" class="primary" data-save-local-draft>保存到系统</button></div></section>`;
+  }
   function closureReport(id=state.dept){
+    restoreLocalDraft(id);
     if(state.reports[id]?.closure_template===1)return state.reports[id];
     const prior=historyReports.find(r=>r.departmentId===id&&r.weekId===previous?.id);
     const priorVersion=prior?.status==='已确认'?prior:prior?.confirmationHistory?.at(-1)?.report||prior;
@@ -28,10 +62,11 @@
   }
   function closureReports(){
     const report=closureReport(),dept=reportDepartments[state.dept],confirmed=report.status==='已确认',editable=Boolean(state.cloud.session)&&!confirmed;
-    return `${header('部门周报','聚焦待办闭环、协同事项与本周计划，不强制填写经营数据。')}<main class="content report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,x])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${x.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join('')}</div><section class="report-head"><div><span>当前填写</span><h2>${dept.name} · ${current.label}周报</h2><p>周期：${current.range}</p><p>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')} · 保存方式：共享保存，离线时使用本机缓存</p><small class="report-flow">填写后保存草稿，完成后标记已确认；已确认周报可重新编辑，确认版本保留。</small></div><div><span class="report-status ${confirmed?'confirmed':report.status==='草稿'?'draft':''}">${report.status||'未填写'}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${closureHistory(state.dept)}<form class="report-form closure-form" data-report-form><fieldset class="report-edit-fields" ${editable?'':'disabled'}>${window.ReportItems.render(report,confirmed)}</fieldset><div class="sticky-actions"><span>最近保存：${reportTime(report.updatedAt||report.savedAt)}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`;
+    return `${header('部门周报','聚焦待办闭环、协同事项与本周计划，不强制填写经营数据。')}<main class="content report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,x])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${x.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join('')}</div><section class="report-head"><div><span>当前填写</span><h2>${dept.name} · ${current.label}周报</h2><p>周期：${current.range}</p><p>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')} · 保存方式：共享保存，离线时使用本机缓存</p><small class="report-flow">填写后手动保存草稿，完成后标记已确认；已确认周报可重新编辑，确认版本保留。</small></div><div><span data-report-status class="report-status ${confirmed?'confirmed':report.status==='草稿'?'draft':''}">${report.status||'未填写'}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${reportRecoveryNotice()}${closureHistory(state.dept)}<form class="report-form closure-form" data-report-form><fieldset class="report-edit-fields" ${editable?'':'disabled'}>${window.ReportItems.render(report,confirmed)}</fieldset><div class="sticky-actions"><span data-save-status>${reportSaveText()}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`;
   }
   function frontPreviousFullWeek(){return [...weeks].slice(0,-1).reverse().find(week=>!week.isPartialWeek)||null}
   function frontReport(){
+    restoreLocalDraft('front');
     if(state.reports.front?.front_template===1)return state.reports.front;
     const prior=historyReports.find(report=>report.departmentId==='front'&&report.weekId===frontPreviousFullWeek()?.id);
     const priorVersion=prior?.status==='已确认'?prior:prior?.confirmationHistory?.at(-1)?.report||prior;
@@ -103,7 +138,7 @@
   }
   function frontReports(){
     const report=frontReport(),confirmed=report.status==='已确认',editable=Boolean(state.cloud.session)&&!confirmed;
-    return `${header('部门周报','前厅部：先看经营数据，再做分析、改善和量化行动计划')}<main class="content report-page front-report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,item])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${item.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join('')}</div><section class="report-head"><div><span>当前填写</span><h2>前厅部 · ${current.label}周报</h2><p>周期：${current.range}</p><p>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')} · 保存方式：共享保存，离线时使用本机缓存</p><small class="report-flow">数据区域自动读取；分析、原因、措施和计划由主管填写。填写后保存草稿，完成后标记已确认。</small></div><div><span class="report-status ${confirmed?'confirmed':report.status==='草稿'?'draft':''}">${report.status||'未填写'}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${frontOverview()}${frontAutoInterpretation()}${frontSalesPerformance()}${frontHistory()}<form class="report-form front-report-form" data-report-form><fieldset class="report-edit-fields" ${editable?'':'disabled'}>${window.FrontReport.render(report,!editable)}</fieldset><div class="sticky-actions"><span>最近保存：${reportTime(report.updatedAt||report.savedAt)}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`;
+    return `${header('部门周报','前厅部：先看经营数据，再做分析、改善和量化行动计划')}<main class="content report-page front-report-page"><div class="dept-tabs" style="grid-template-columns:repeat(3,1fr)">${Object.entries(reportDepartments).map(([id,item])=>`<button class="${state.dept===id?'active':''}" data-dept="${id}"><span>${item.name}</span><small>${state.reports[id]?.status||'未填写'}</small></button>`).join('')}</div><section class="report-head"><div><span>当前填写</span><h2>前厅部 · ${current.label}周报</h2><p>周期：${current.range}</p><p>主管：${safeValue(report.editorName||state.cloud.session?.name||'未填写')} · 保存方式：共享保存，离线时使用本机缓存</p><small class="report-flow">数据区域自动读取；分析、原因、措施和计划由主管填写。填写后手动保存草稿，完成后标记已确认。</small></div><div><span data-report-status class="report-status ${confirmed?'confirmed':report.status==='草稿'?'draft':''}">${report.status||'未填写'}</span>${confirmed&&report.confirmedBy?`<small>确认人：${safeValue(report.confirmedBy)} · ${reportTime(report.confirmedAt)}</small>`:''}</div></section>${reportRecoveryNotice()}${frontOverview()}${frontAutoInterpretation()}${frontSalesPerformance()}${frontHistory()}<form class="report-form front-report-form" data-report-form><fieldset class="report-edit-fields" ${editable?'':'disabled'}>${window.FrontReport.render(report,!editable)}</fieldset><div class="sticky-actions"><span data-save-status>${reportSaveText()}</span>${confirmed?'<button type="button" class="ghost" data-reopen-report>重新编辑</button>':'<button type="button" class="ghost" data-save-draft>保存草稿</button><button type="button" class="primary" data-confirm-report>标记已确认</button>'}</div></form></main>`;
   }
   function persistExplains(){try{localStorage.setItem("super_bubble_weekly_lite_explains",JSON.stringify(state.explains))}catch(_){}}
   async function persistMeeting(){
@@ -319,13 +354,14 @@
   }
   function modal(){
     if(!state.modal)return"";
+    if(state.modal==='unsaved-changes')return `<div class="modal-backdrop"><section class="modal unsaved-modal"><div class="modal-head"><div><span>部门周报</span><h2>当前内容尚未保存</h2></div><button data-unsaved-action="continue">×</button></div><div class="unsaved-body"><p>切换前请选择处理方式，避免刚填写的内容丢失。</p></div><div class="modal-foot"><button type="button" data-unsaved-action="discard">不保存并切换</button><button type="button" data-unsaved-action="continue">继续编辑</button><button type="button" class="primary" data-unsaved-action="save">保存并切换</button></div></section></div>`;
     if(state.modal==='auth')return `<div class="modal-backdrop"><section class="modal auth-modal"><div class="modal-head"><div><span>共享周报填写</span><h2>进入编辑模式</h2></div><button data-close>×</button></div><div class="editor-guide"><b>首次填写请注意</b><span>先进入编辑模式；填写固定真实姓名，后续保持同一写法；只填写自己负责的部门；未完成先保存草稿，完成后再标记已确认。</span></div><form data-auth-form><label>编辑范围<select name="role"><option value="editor" ${state.authIntent==='manager'?'':'selected'}>部门周报编辑</option><option value="manager" ${state.authIntent==='manager'?'selected':''}>店长周会编辑</option></select></label><label>填写人<input name="name" autocomplete="name" required placeholder="例如：前厅主管" value="${safeValue(savedEditorName())}"></label><p>姓名只保存在当前浏览器，用于显示最近填写人；如首次填写有误，重新进入编辑模式后可修改。</p><div class="modal-foot"><button type="button" data-close>取消</button><button class="primary">进入编辑模式</button></div></form></section></div>`;
     if(state.modal==='editor-guide')return `<div class="modal-backdrop"><section class="modal auth-modal"><div class="modal-head"><div><span>部门周报</span><h2>使用说明</h2></div><button data-close>×</button></div><div class="editor-guide"><b>填写流程</b><span>进入编辑模式 → 填写固定真实姓名 → 只填写自己负责的部门 → 未完成点保存草稿 → 完成后点标记已确认。</span><small>请持续使用同一姓名写法，便于周会识别填写人。</small></div><div class="modal-foot"><button class="primary" data-close>知道了</button></div></section></div>`;
     return "";
   }
   function emptyData(){return `${header(state.page==='overview'?'周经营总览':state.page==='frontDouyin'?'前厅与抖音':state.page==='reports'?'部门周报':'周会与老板汇报','本周经营数据尚未发布')}<main class="content"><section class="panel real-data-empty"><span>等待周版本</span><h2>本周经营数据尚未写入网页</h2><p>请由店长把本周Excel交给Codex生成新的静态数据包并发布。门店员工无需自行导入Excel。</p></section></main>`}
   function validateReportDOM(){if(state.page!=="reports"||!current)return;const closure=isClosureDepartment(state.dept),front=state.dept==='front',expected=closure?Object.fromEntries(window.ReportItems.sections.map(s=>[s.key,0])):front?Object.fromEntries([['overview',0],['analysis',5],['sales',0],...window.FrontReport.sections.map(s=>[s.key,0])]):{"key-result":1,problems:6,support:12,focus:12,undone:9};const result={};for(const [id,minFields] of Object.entries(expected)){const selector=closure?`[data-closure-module="${id}"]`:`[data-${front?'front':'report'}-module="${id}"]`,module=document.querySelector(selector),fields=module?module.querySelectorAll("input, textarea, select").length:0;result[id]={exists:Boolean(module),fields,fillable:fields>=minFields}}const ok=Object.values(result).every(x=>x.exists&&x.fillable);document.documentElement.dataset.reportDomReady=ok?"true":"false";window.__liteReportDomCheck={ok,result};if(!ok)console.error("部门周报核心模块渲染不完整",result)}
-  function render(){let body=!current?emptyData():state.page==='overview'?overview():state.page==='frontDouyin'?frontDouyin():state.page==='reports'?reports():meetingV2();app.innerHTML=`<div class="shell ${state.presentation?'presentation':''}">${sidebar()}<div class="workspace">${body}</div></div>${modal()}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;bind();validateReportDOM()}
+  function render(){let body=!current?emptyData():state.page==='overview'?overview():state.page==='frontDouyin'?frontDouyin():state.page==='reports'?reports():meetingV2();app.innerHTML=`<div class="shell ${state.presentation?'presentation':''}">${sidebar()}<div class="workspace">${body}</div></div>${modal()}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;bind();validateReportDOM();const focusSelector=state.focusAfterRender;state.focusAfterRender=null;if(focusSelector)setTimeout(()=>{const target=document.querySelector(focusSelector);target?.closest('details')?.setAttribute('open','');target?.focus()},0)}
   function reportDraft(status="草稿"){
     const form=document.querySelector('[data-report-form]');if(!form||!current)return null;
     const existing=state.reports[state.dept]||{};let record={...existing,departmentId:state.dept,weekId:current.id,status,editorName:state.cloud.session?.name||existing.editorName||"未填写"};
@@ -335,27 +371,36 @@
     if(status!=="已确认"){record.confirmedBy="";record.confirmedAt=""}
     return record;
   }
-  async function saveReport(status,{silent=false,record:providedRecord=null}={}){
-    if(!state.cloud.session){if(!silent){state.authIntent="edit";state.modal="auth";render()}return}
-    const record=providedRecord||reportDraft(status);if(!record)return;
-    const department=record.departmentId||state.dept;
+  async function saveReport(status,{silent=false,record:providedRecord=null,keepalive=false,rerenderAfter=false}={}){
+    if(!state.cloud.session){if(!silent){state.authIntent="edit";state.modal="auth";render()}return {ok:false}}
+    const record=providedRecord||reportDraft(status);if(!record)return {ok:false};
+    const department=record.departmentId||state.dept,edit=reportEdit(department);
+    record.status=status;
     if(status==='已确认'){record.confirmedBy=state.cloud.session.name;record.confirmedAt=new Date().toISOString()}
-    state.reports[department]=record;window.CloudSync.cacheReport(department,record);state.cloud.status="saving";
-    if(!silent)render();
-    try{const result=await (reportSaveQueue=reportSaveQueue.catch(()=>{}).then(()=>window.CloudSync.saveReport(department,record)));if(state.reports[department]===record)state.reports[department]=result.report;state.cloud.status="synced";state.cloud.lastUpdated=result.report.updatedAt;if(!silent)flash(status==='已确认'?`${reportDepartments[department].name}周报已确认并同步`:'草稿已保存')}
-    catch(error){state.cloud.status="offline";if(!silent)flash(`${error.message||"周报云端保存失败"}，本机缓存已保留`)}
+    state.reports[department]=record;window.CloudSync.saveLocalDraft(department,record);
+    edit.saving=true;state.cloud.status="saving";updateReportSaveUi();
+    try{
+      const result=await (reportSaveQueue=reportSaveQueue.catch(()=>{}).then(()=>window.CloudSync.saveReport(department,record,{keepalive})));
+      if(state.reports[department]===record)state.reports[department]=result.report;
+      edit.saving=false;edit.failed=false;edit.dirty=false;edit.recovery=null;edit.sessionDraft=false;edit.baseRecord=cloneRecord(result.report);edit.lastSavedAt=result.report.updatedAt||new Date().toISOString();
+      window.CloudSync.clearLocalDraft(department,record.weekId);state.cloud.status="synced";state.cloud.lastUpdated=edit.lastSavedAt;
+      if(rerenderAfter)render();else updateReportSaveUi();
+      return {ok:true,report:result.report};
+    }catch(error){
+      edit.saving=false;edit.failed=true;edit.dirty=true;state.cloud.status="offline";window.CloudSync.saveLocalDraft(department,record);updateReportSaveUi();
+      if(!silent)console.warn(error);
+      return {ok:false,error};
+    }
   }
-  async function reopenReport(){if(!state.cloud.session){state.authIntent="edit";state.modal="auth";render();return}const department=state.dept,existing=state.reports[department]||{};if(existing.status!=="已确认")return;try{await window.CloudSync.archiveConfirmed(department,{...existing,weekId:current.id})}catch(error){flash('历史确认版本尚未保存，请联网后再重新编辑');return}const record={...existing,departmentId:department,weekId:current.id,status:"草稿",confirmedBy:"",confirmedAt:""};state.reports[department]=record;render();await saveReport("草稿",{record});flash('已转为草稿，可继续修改')}
+  async function reopenReport(){if(!state.cloud.session){state.authIntent="edit";state.modal="auth";render();return}const department=state.dept,existing=state.reports[department]||{};if(existing.status!=="已确认")return;try{await window.CloudSync.archiveConfirmed(department,{...existing,weekId:current.id})}catch(error){flash('历史确认版本尚未保存，请联网后再重新编辑');return}const record={...existing,departmentId:department,weekId:current.id,status:"草稿",confirmedBy:"",confirmedAt:""};state.reports[department]=record;const edit=reportEdit(department);edit.baseRecord=cloneRecord(record);edit.dirty=false;edit.recovery=null;render();await saveReport("草稿",{record});}
   function bindClosureReport(){
     if(state.page!=='reports'||!isClosureDepartment(state.dept)||!state.cloud.session||state.reports[state.dept]?.status==='已确认')return;
     const form=document.querySelector('[data-report-form]');if(!form)return;
-    const change=fn=>{
-      clearTimeout(reportAutosaveTimer);
+    const change=(fn,focusSelector='')=>{
       const next=reportDraft('草稿');if(!next)return;
-      fn(next);state.reports[state.dept]=next;
-      window.CloudSync.cacheReport(state.dept,next);render();saveReport('草稿',{silent:true});
+      fn(next);markReportDirty(next);state.focusAfterRender=focusSelector;render();
     };
-    form.querySelectorAll('[data-add-closure]').forEach(button=>button.onclick=()=>change(report=>{report[`closure_${button.dataset.addClosure}`].push(window.ReportItems.blank())}));
+    form.querySelectorAll('[data-add-closure]').forEach(button=>button.onclick=()=>{const row=window.ReportItems.blank(),key=button.dataset.addClosure;change(report=>{report[`closure_${key}`].push(row)},`[data-closure-row="${row.id}"] [data-closure-field="title"]`)});
     form.querySelector('[data-carry-followups]')?.addEventListener('click',()=>change(report=>Object.assign(report,window.ReportItems.carryFollowups(report))));
     form.querySelectorAll('[data-delete-row]').forEach(button=>button.onclick=()=>{
       const el=button.closest('[data-closure-row]'),key=`closure_${el.dataset.section}`,id=el.dataset.closureRow;
@@ -367,21 +412,22 @@
     form.querySelectorAll('[data-move-row]').forEach(button=>button.onclick=()=>{const id=button.closest('[data-closure-row]').dataset.closureRow;move(id,state.reports[state.dept].closure_plans.findIndex(x=>x.id===id)+Number(button.dataset.moveRow))});
     form.querySelectorAll('.closure-drag').forEach(handle=>{handle.ondragstart=event=>{closureDragId=handle.closest('[data-closure-row]').dataset.closureRow;event.dataTransfer.setData('text/plain',closureDragId);event.dataTransfer.effectAllowed='move'};handle.ondragend=()=>{closureDragId=null}});
     form.querySelectorAll('[data-section="plans"]').forEach(el=>{el.ondragover=event=>{if(closureDragId){event.preventDefault();event.dataTransfer.dropEffect='move'}};el.ondrop=event=>{event.preventDefault();if(!closureDragId)return;const id=closureDragId;closureDragId=null;move(id,state.reports[state.dept].closure_plans.findIndex(x=>x.id===el.dataset.closureRow))}});
-    form.addEventListener('input',event=>{
+    const updateRow=event=>{
+      const next=reportDraft('草稿');if(next)markReportDirty(next);
       const el=event.target.closest('[data-closure-row]');if(!el)return;
       const row=window.ReportItems.read(form,state.reports[state.dept])[`closure_${el.dataset.section}`].find(x=>x.id===el.dataset.closureRow),t=window.ReportItems.tone(row,el.dataset.section);
       el.querySelector('[data-row-title]').textContent=row.title||'待填写事项';const badge=el.querySelector('[data-row-status]');badge.className=`closure-status ${t.color}`;badge.textContent=t.label;
-    });
+    };
+    form.addEventListener('input',updateRow);form.addEventListener('change',updateRow);
   }
   function bindFrontReport(){
     if(state.page!=='reports'||state.dept!=='front'||!state.cloud.session||state.reports.front?.status==='已确认')return;
     const form=document.querySelector('[data-report-form]');if(!form)return;
-    const change=fn=>{
-      clearTimeout(reportAutosaveTimer);
+    const change=(fn,focusSelector='')=>{
       const next=reportDraft('草稿');if(!next)return;
-      fn(next);state.reports.front=next;window.CloudSync.cacheReport('front',next);render();saveReport('草稿',{silent:true,record:next});
+      fn(next);markReportDirty(next,'front');state.focusAfterRender=focusSelector;render();
     };
-    form.querySelectorAll('[data-front-add]').forEach(button=>button.onclick=()=>change(report=>{report[`front_${button.dataset.frontAdd}`].push(window.FrontReport.blank())}));
+    form.querySelectorAll('[data-front-add]').forEach(button=>button.onclick=()=>{const row=window.FrontReport.blank(),key=button.dataset.frontAdd;change(report=>{report[`front_${key}`].push(row)},`[data-front-row="${row.id}"] [data-front-field="title"]`)});
     form.querySelector('[data-front-carry]')?.addEventListener('click',()=>change(report=>Object.assign(report,window.FrontReport.carryFollowups(report))));
     form.querySelectorAll('[data-front-delete]').forEach(button=>button.onclick=()=>{
       const element=button.closest('[data-front-row]'),key=`front_${element.dataset.frontSection}`,id=element.dataset.frontRow;
@@ -393,34 +439,62 @@
     form.querySelectorAll('[data-front-move]').forEach(button=>button.onclick=()=>{const id=button.closest('[data-front-row]').dataset.frontRow;move(id,state.reports.front.front_plans.findIndex(item=>item.id===id)+Number(button.dataset.frontMove))});
     form.querySelectorAll('.closure-drag').forEach(handle=>{handle.ondragstart=event=>{closureDragId=handle.closest('[data-front-row]').dataset.frontRow;event.dataTransfer.setData('text/plain',closureDragId);event.dataTransfer.effectAllowed='move'};handle.ondragend=()=>{closureDragId=null}});
     form.querySelectorAll('[data-front-section="plans"]').forEach(element=>{element.ondragover=event=>{if(closureDragId){event.preventDefault();event.dataTransfer.dropEffect='move'}};element.ondrop=event=>{event.preventDefault();if(!closureDragId)return;const id=closureDragId;closureDragId=null;move(id,state.reports.front.front_plans.findIndex(item=>item.id===element.dataset.frontRow))}});
-    form.addEventListener('input',event=>{
+    const updateRow=event=>{
+      const next=reportDraft('草稿');if(next)markReportDirty(next,'front');
       const element=event.target.closest('[data-front-row]');if(!element)return;
       const row=window.FrontReport.read(form,state.reports.front)[`front_${element.dataset.frontSection}`].find(item=>item.id===element.dataset.frontRow),tone=window.FrontReport.tone(row,element.dataset.frontSection);
       element.querySelector('[data-front-title]').textContent=row.title||'待填写事项';const badge=element.querySelector('[data-front-status]');badge.className=`closure-status ${tone.color}`;badge.textContent=tone.label;
-    });
+    };
+    form.addEventListener('input',updateRow);form.addEventListener('change',updateRow);
+  }
+  function completeReportNavigation(next){
+    state.modal=null;state.pendingNavigation=null;
+    if(next.type==='page'){state.page=next.value;window.scrollTo(0,0)}
+    if(next.type==='department')state.dept=next.value;
+    render();
+  }
+  function requestReportNavigation(next){
+    const edit=reportEdit();
+    if(state.page==='reports'&&state.cloud.session&&state.reports[state.dept]?.status!=='已确认'&&edit.dirty){state.pendingNavigation=next;state.modal='unsaved-changes';render();return;}
+    completeReportNavigation(next);
+  }
+  function discardCurrentLocalDraft(){
+    const edit=reportEdit(),department=state.dept;
+    state.reports[department]=cloneRecord(edit.baseRecord);
+    edit.dirty=false;edit.saving=false;edit.failed=false;edit.recovery=null;edit.sessionDraft=false;edit.baseRecord=null;
+    window.CloudSync.clearLocalDraft(department,current?.id);
+  }
+  async function resolveUnsavedNavigation(action){
+    if(action==='continue'){state.modal=null;state.pendingNavigation=null;render();return;}
+    const next=state.pendingNavigation;
+    if(action==='save')await saveReport('草稿',{record:state.reports[state.dept],silent:true});
+    if(action==='discard')discardCurrentLocalDraft();
+    completeReportNavigation(next||{type:'page',value:state.page});
+  }
+  function persistUnsavedReportOnLeave(){
+    if(state.page!=='reports'||!state.cloud.session||state.reports[state.dept]?.status==='已确认')return;
+    const edit=reportEdit();if(!edit.dirty)return;
+    const record=state.reports[state.dept];
+    if(record)void saveReport('草稿',{silent:true,record,keepalive:true});
   }
   function bindCore(){
-    const flushReport=()=>{const pending=reportAutosaveTimer;clearTimeout(reportAutosaveTimer);reportAutosaveTimer=null;if(pending&&state.page==='reports'&&state.cloud.session&&state.reports[state.dept]?.status!=='已确认')saveReport('草稿',{silent:true})};
-    document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>{flushReport();state.page=button.dataset.nav;window.scrollTo(0,0);render()});
+    document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>requestReportNavigation({type:'page',value:button.dataset.nav}));
     document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>{state.modal=null;render()});
     document.querySelector('[data-edit-mode]')?.addEventListener('click',()=>{if(state.cloud.session){window.CloudSync.logout();state.cloud.session=null;flash('已退出编辑模式')}else{state.authIntent='edit';state.modal='auth';render()}});
     document.querySelector('[data-editor-guide]')?.addEventListener('click',()=>{state.modal='editor-guide';render()});
     document.querySelector('[data-auth-form]')?.addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form)),name=String(data.name||'').trim(),previousName=savedEditorName();if(previousName&&name!==previousName&&!window.confirm(`上次填写人是${previousName}，是否确认改为${name}？`))return;try{localStorage.setItem(EDITOR_NAME_KEY,name)}catch(_){}state.cloud.session=await window.CloudSync.login(data.role,"",name);state.modal=null;flash(`已进入${state.cloud.session.role==='manager'?'店长':'部门'}编辑模式`)});
     document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>{state.tab=button.dataset.tab;render()});
     document.querySelectorAll('[data-rank]').forEach(button=>button.onclick=()=>{state.rank=button.dataset.rank;render()});
-    document.querySelectorAll('[data-dept]').forEach(button=>button.onclick=()=>{flushReport();state.dept=button.dataset.dept;render()});
+    document.querySelectorAll('[data-dept]').forEach(button=>button.onclick=()=>requestReportNavigation({type:'department',value:button.dataset.dept}));
     document.querySelectorAll('[data-meeting-mode]').forEach(button=>button.onclick=()=>{state.meetingMode=button.dataset.meetingMode;render()});
-    document.querySelector('[data-copy-undone]')?.addEventListener('click',async()=>{[0,1,2].forEach(index=>{const from=document.querySelector(`[name="undone_${index}"]`),to=document.querySelector(`[name="focus_${index}_title"]`);if(from?.value&&to&&!to.value)to.value=from.value});await saveReport('草稿')});
-    document.querySelector('[data-add-review]')?.addEventListener('click',()=>{const form=document.querySelector('[data-report-form]');if(form){const draft={...(state.reports[state.dept]||{}),departmentId:state.dept,weekId:current.id};for(const [key,value] of new FormData(form).entries())draft[key]=value;state.reports[state.dept]=draft}state.reviewRows[state.dept]=Math.min(5,operationsReviewCount(state.dept)+1);render()});
-    document.querySelector('[data-save-draft]')?.addEventListener('click',()=>{clearTimeout(reportAutosaveTimer);saveReport('草稿')});
-    document.querySelector('[data-confirm-report]')?.addEventListener('click',()=>{clearTimeout(reportAutosaveTimer);if(window.confirm('确认将本周周报标记为已确认？确认后将作为周会正式摘要使用。'))saveReport('已确认')});
+    document.querySelector('[data-copy-undone]')?.addEventListener('click',()=>{[0,1,2].forEach(index=>{const from=document.querySelector(`[name="undone_${index}"]`),to=document.querySelector(`[name="focus_${index}_title"]`);if(from?.value&&to&&!to.value)to.value=from.value});const draft=reportDraft('草稿');if(draft)markReportDirty(draft)});
+    document.querySelector('[data-add-review]')?.addEventListener('click',()=>{const draft=reportDraft('草稿');if(draft)markReportDirty(draft);state.reviewRows[state.dept]=Math.min(5,operationsReviewCount(state.dept)+1);render()});
+    document.querySelector('[data-save-draft]')?.addEventListener('click',()=>saveReport('草稿'));
+    document.querySelector('[data-confirm-report]')?.addEventListener('click',async()=>{if(window.confirm('确认将本周周报标记为已确认？确认后将作为周会正式摘要使用。'))await saveReport('已确认',{rerenderAfter:true})});
     document.querySelector('[data-reopen-report]')?.addEventListener('click',reopenReport);
-    const reportForm=document.querySelector('[data-report-form]');
-    if(reportForm&&state.cloud.session&&state.reports[state.dept]?.status!=="已确认"){
-      const cacheDraft=()=>{const record=reportDraft("草稿");if(!record)return;state.reports[state.dept]=record;window.CloudSync.cacheReport(state.dept,record)};
-      reportForm.addEventListener('input',()=>{cacheDraft();clearTimeout(reportAutosaveTimer);reportAutosaveTimer=setTimeout(()=>saveReport("草稿",{silent:true}),450)});
-      reportForm.addEventListener('focusout',()=>{cacheDraft();clearTimeout(reportAutosaveTimer);reportAutosaveTimer=setTimeout(()=>saveReport("草稿",{silent:true}),0)});
-    }
+    document.querySelector('[data-save-local-draft]')?.addEventListener('click',()=>saveReport('草稿',{record:state.reports[state.dept]}));
+    document.querySelector('[data-discard-local-draft]')?.addEventListener('click',()=>{discardCurrentLocalDraft();render()});
+    document.querySelectorAll('[data-unsaved-action]').forEach(button=>button.onclick=()=>resolveUnsavedNavigation(button.dataset.unsavedAction));
     document.querySelectorAll('[data-explain-note]').forEach(input=>input.oninput=()=>{const key=input.dataset.explainNote;state.explains[key]={...(state.explains[key]||{}),note:input.value};persistExplains()});
     document.querySelectorAll('[data-explain-status]').forEach(button=>button.onclick=()=>{const key=button.dataset.explainStatus;const currentExplain=state.explains[key]||{};state.explains[key]={...currentExplain,status:currentExplain.status==='已说明'?'待说明':'已说明'};persistExplains();render()});
   }
@@ -477,6 +551,6 @@
   async function applyBootstrap(payload){historyReports=payload?.reports||[];state.reports=Object.fromEntries(historyReports.filter(x=>x.weekId===current?.id).map(x=>[x.departmentId,x]));state.meeting={actions:[],decisions:[],ownerSupport:[],...(payload?.meeting||{})};state.cloud.status=payload?.offline?'offline':'synced';state.cloud.source=payload?.source||'cloud';state.cloud.lastUpdated=payload?.updatedAt||payload?.meeting?.updatedAt||'';render();return true}
   async function loadCloud(){const payload=await window.CloudSync.bootstrap(weeks);await applyBootstrap(payload);if(payload?.offline&&payload?.error)flash('共享内容读取失败，当前显示本机缓存')}
   loadCloud();
-  window.CloudSync.startPolling(weeks);
-  window.CloudSync.on(event=>{if(event.type==='session'){state.cloud.session=event.session;render();return}if(event.type==='remote'){const editing=document.activeElement?.closest?.('[data-report-form],[data-meeting-action-form]');if(!editing)applyBootstrap(event.payload)}});
+  window.addEventListener('pagehide',persistUnsavedReportOnLeave);
+  window.CloudSync.on(event=>{if(event.type==='session'){state.cloud.session=event.session;render()}});
 })();

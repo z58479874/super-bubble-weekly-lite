@@ -19,6 +19,10 @@
 .report-edit-fields { border: 0; margin: 0; min-width: 0; padding: 0; }
 .report-edit-fields:disabled { opacity: .78; }
 .report-flow { color: var(--muted); display: block; font-size: 12px; margin-top: 8px; }
+.report-draft-recovery { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid #f2c94c; border-radius: 10px; background: #fffaeb; color: #7a4d00; }
+.report-draft-recovery > div { display: grid; gap: 3px; }.report-draft-recovery span { font-size: 12px; color: #8a5a00; }.report-draft-recovery > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.sticky-actions [data-save-status] { font-weight: 650; color: #667085; }.sticky-actions [data-save-status]::before { content: '保存状态：'; font-weight: 400; }
+.unsaved-body { padding: 4px 22px 18px; color: #475467; }.unsaved-modal .modal-foot { justify-content: flex-end; gap: 10px; }.unsaved-modal .modal-foot > button:not(.primary) { border: 1px solid var(--line); border-radius: 9px; background: #fff; padding: 10px 14px; cursor: pointer; }
 .closure-module .panel-title p { white-space: normal; }
 .closure-list { max-height: 680px; overflow-y: auto; margin: 12px 0; }
 .closure-row { border: 1px solid var(--line); border-radius: 9px; margin: 10px 0; background: #fff; }
@@ -46,6 +50,7 @@
 .closure-history dt { font-weight: 600; }
 .closure-history dd { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media(max-width:650px){.closure-fields{grid-template-columns:1fr}.closure-list{max-height:600px}.closure-row summary{gap:6px;padding:10px}}
+@media(max-width:650px){.report-draft-recovery{align-items:flex-start;flex-direction:column}.report-draft-recovery>div:last-child{justify-content:flex-start}.unsaved-modal .modal-foot{flex-wrap:wrap}.unsaved-modal .modal-foot .primary{margin-left:auto}}
 .front-data-overview { margin: 16px 0; padding: 18px 20px; border: 1px solid #d9e4f8; border-radius: 12px; background: #f8fbff; }
 .front-data-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 14px; }
 .front-data-head > div > span { color: #175cd3; font-size: 13px; font-weight: 700; }
