@@ -8,6 +8,7 @@
     "build": "vite build --base=/super-bubble-weekly-lite/",
     "preview": "vite preview",
     "data:generate": "node scripts/generate-weekly-data.mjs",
+    "data:douyin": "node scripts/generate-douyin-topic.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {},

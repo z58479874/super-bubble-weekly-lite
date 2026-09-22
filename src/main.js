@@ -21,6 +21,7 @@ try {
   await load(`${publicBase}cloud-client.js`);
   await load(`${publicBase}report-items.js`);
   await load(`${publicBase}front-report.js`);
+  await load(`${publicBase}douyin-topic.js`);
   await load(`${publicBase}app.js`);
 } catch (error) {
   document.querySelector("#app").innerHTML = `<main style="max-width:680px;margin:80px auto;padding:24px;font-family:system-ui;color:#25324a"><h1>看板启动失败</h1><p>${error.message}</p></main>`;

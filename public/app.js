@@ -17,9 +17,10 @@
   }
   function shortSaveTime(value){const date=value?new Date(value):null;return date&&!Number.isNaN(date.getTime())?date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}):''}
   function reportSaveText(department=state.dept){const edit=reportEdit(department),report=state.reports[department]||{};if(edit.saving)return '正在保存';if(edit.failed)return '保存失败，请重试';if(edit.dirty)return '有未保存修改';const time=edit.lastSavedAt||report.updatedAt||report.savedAt;return time?`已保存 · ${shortSaveTime(time)}`:'已保存'}
-  function updateReportSaveUi(){
-    const edit=reportEdit(),report=state.reports[state.dept]||{},status=report.status||'未填写';
-    document.querySelectorAll('[data-save-status]').forEach(node=>node.textContent=reportSaveText());
+  function updateReportSaveUi(department=state.dept){
+    const edit=reportEdit(department),report=state.reports[department]||{},status=report.status||'未填写';
+    document.querySelectorAll('[data-save-status]').forEach(node=>node.textContent=reportSaveText(department));
+    document.querySelectorAll('[data-topic-save-status]').forEach(node=>node.textContent=reportSaveText('douyin'));
     document.querySelectorAll('[data-report-status]').forEach(node=>{node.textContent=status;node.className=`report-status ${status==='已确认'?'confirmed':status==='草稿'?'draft':''}`});
   }
   function markReportDirty(record,department=state.dept){
@@ -28,7 +29,7 @@
     if(!edit.baseRecord)edit.baseRecord=cloneRecord(state.reports[department]||{});
     edit.dirty=true;edit.failed=false;edit.sessionDraft=true;state.reports[department]=record;
     window.CloudSync?.saveLocalDraft(department,record);
-    updateReportSaveUi();
+    updateReportSaveUi(department);
   }
   function restoreLocalDraft(department){
     if(!current||!window.CloudSync?.getLocalDraft)return;
@@ -149,7 +150,7 @@
     catch(error){state.cloud.status="offline";flash(error.message||"周会内容保存失败，内容已保存在本机");}
     render();
   }
-  const nav=[{id:"overview",icon:"▦",label:"周经营总览"},{id:"frontDouyin",icon:"↗",label:"前厅与抖音"},{id:"reports",icon:"▤",label:"部门周报"},{id:"meeting",icon:"◈",label:"周会与老板汇报"}];
+  const nav=[{id:"overview",icon:"▦",label:"周经营总览"},{id:"frontDouyin",icon:"↗",label:"前厅与抖音"},{id:"douyinTopic",icon:"◉",label:"抖音经营详情"},{id:"reports",icon:"▤",label:"部门周报"},{id:"meeting",icon:"◈",label:"周会与老板汇报"}];
   const money=n=>Number.isFinite(n)?`¥${Math.abs(n).toLocaleString("zh-CN",{maximumFractionDigits:0})}`:"未统计";
   const ratio=(a,b)=>b>0?a/b*100:null;
   const pct=(n,d=1)=>Number.isFinite(n)?`${n.toFixed(d)}%`:"不可计算";
@@ -175,6 +176,18 @@
     };
   }
   const douyinDetails=week=>D.douyinFacts[week.id];
+  const douyinTopic=week=>D.douyinTopic?.[week?.id]||null;
+  function douyinTopicNotes(){
+    if(!current||!window.DouyinTopic)return {};
+    const existing=state.reports.douyin||{};
+    if(existing.topic_template===1&&existing.weekId===current.id)return existing;
+    const record=window.DouyinTopic.noteRecord({...existing,departmentId:'douyin',weekId:current.id,reportId:window.CloudSync?.reportId(current),editorName:existing.editorName||state.cloud.session?.name||'未填写'});
+    state.reports.douyin=record;return record;
+  }
+  function douyinTopicPage(){
+    const topic=douyinTopic(current),prior=douyinTopic(previous),record=douyinTopicNotes();
+    return `${header('抖音经营详情','成交、到店、核销分别统计；不把不同周期事实拼成同批订单转化。')}${window.DouyinTopic?.render(topic,prior,record,{editable:Boolean(state.cloud.session)})||'<main class="content"><p>抖音专题组件未加载。</p></main>'}`;
+  }
   function flash(text){state.toast=text;render();setTimeout(()=>{state.toast="";render()},2200)}
   function spark(values){const clean=values.filter(Number.isFinite);if(clean.length<2)return `<span class="spark-empty">${clean.length===1?'单期':'暂无趋势'}</span>`;const min=Math.min(...clean),max=Math.max(...clean),step=68/(clean.length-1),pts=clean.map((v,i)=>`${6+i*step},${32-(v-min)/(max-min||1)*24}`).join(" "),last=pts.split(" ").at(-1).split(",");return `<svg class="spark" viewBox="0 0 80 38" aria-label="最近${clean.length}期趋势"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="${last[0]}" cy="${last[1]}" r="3" fill="currentColor"/></svg>`}
   function metric(label,get,format=x=>x,accent="blue") {const vals=weeks.map(get),c=vals.at(-1),p=vals.at(-2);return `<article class="metric ${accent}"><div class="metric-head"><span>${label}</span>${spark(vals)}</div><strong>${format(c)}</strong><div class="compare"><span>上期 <b>${Number.isFinite(p)?format(p):'暂无'}</b></span>${vals.length>=3?`<span>前一期 <b>${format(vals.at(-3))}</b></span>`:''}</div><div class="metric-foot"><span>较上期</span><b class="${Number.isFinite(c)&&Number.isFinite(p)&&c>=p?"up":"down"}">${delta(c,p)}</b></div></article>`}
@@ -232,6 +245,7 @@
           <article class="panel compact-analysis"><div class="panel-title"><div><h2>客流会员漏斗</h2><p>有效可转化家庭 = 入园家庭 − 历史会员家庭</p></div><b>${pct(rate(current),2)}</b></div><div class="funnel compact-funnel">${[["入园家庭",current.admission],["历史会员家庭",current.historical],["有效可转化",valid(current)],["办卡家庭",cardCount(current)]].map((x,i)=>`<div><span>${x[0]}</span><b>${x[1]}户</b><i style="width:${100-i*17}%"></i></div>`).join("")}</div><div class="card-mix">${[[299,current.cards.c299],[599,current.cards.c599],[999,current.cards.c999]].map(x=>`<div><span>${x[0]}元</span><b>${x[1]}张</b><small>${pct(ratio(x[1],cardCount(current)),1)}</small></div>`).join("")}<div class="featured"><span>中大卡</span><b>${current.cards.c599+current.cards.c999}张</b><small>${pct(mid(current),2)}</small></div></div></article>
         </section>
         <section class="secondary-kpis" aria-label="次级经营指标">${secondaryCards}</section>
+        ${douyinTopic(current)?window.DouyinTopic.summary(douyinTopic(current),douyinTopic(previous)):''}
         <section class="panel weekly-trends"><div class="panel-title"><div><h2>${weeks.length>=3?`近${weeks.length}期趋势`:weeks.length===2?'两期对比':'单期数据'}</h2><p>${weeks.length>=3?'趋势用于判断变化是否连续':'不制造不存在的第三期数据'}</p></div></div><div class="trend-grid-lite">${trendItems.map(([label,get,format])=>{const vals=values(get);return `<article class="trend-item"><div><span>${label}</span><b>${format(vals.at(-1))}</b></div>${spark(vals)}<small>${weeks.map((w,i)=>`<span><b>${periodNames[i]}</b><em>${w.label}${w.isPartialWeek?' · 非完整周':''}</em><strong>${format(vals[i])}</strong></span>`).join("")}</small></article>`}).join("")}</div></section>
         <section class="panel changes changes-lite"><div class="panel-title"><div><h2>本周主要变化</h2><p>按收入贡献自动排序；只陈述事实，由主管补充业务原因</p></div></div><div class="change-grid"><div><h3>主要增长贡献</h3>${growth.map((x,i)=>{const display=changeDisplay(x,"growth");return `<div class="change-row"><i>${i+1}</i><span><b>${display.label}</b><small>${display.note}</small></span><strong class="up">${display.amount}</strong></div>`}).join("")}</div><div><h3>下降拖累 TOP3</h3>${drag.length?drag.map((x,i)=>{const display=changeDisplay(x,"drag");return `<div class="change-row"><i>${i+1}</i><span><b>${display.label}</b><small>${display.note}</small></span><strong class="down">${display.amount}</strong></div>`}).join(""):'<p class="empty compact-empty">本周暂无明显收入拖累项。</p>'}</div><div><h3>需要主管解释</h3>${explainItems.map((item,i)=>{const explain=state.explains[item.key]||{status:"待说明",note:""};const done=explain.status==="已说明";return `<div class="explain-row ${done?'explained':''}"><i>${i+1}</i><div><b>${item.title}</b><span>${item.fact}</span><div class="explain-actions"><button class="explain-status ${done?'done':''}" data-explain-status="${item.key}">${done?'已说明':'待说明'}</button><input data-explain-note="${item.key}" value="${escapeAttr(explain.note)}" placeholder="填写一句会议说明（仅本机保存）"></div></div></div>`}).join("")}</div></div></section>
       </main>`;
@@ -359,9 +373,9 @@
     if(state.modal==='editor-guide')return `<div class="modal-backdrop"><section class="modal auth-modal"><div class="modal-head"><div><span>部门周报</span><h2>使用说明</h2></div><button data-close>×</button></div><div class="editor-guide"><b>填写流程</b><span>进入编辑模式 → 填写固定真实姓名 → 只填写自己负责的部门 → 未完成点保存草稿 → 完成后点标记已确认。</span><small>请持续使用同一姓名写法，便于周会识别填写人。</small></div><div class="modal-foot"><button class="primary" data-close>知道了</button></div></section></div>`;
     return "";
   }
-  function emptyData(){return `${header(state.page==='overview'?'周经营总览':state.page==='frontDouyin'?'前厅与抖音':state.page==='reports'?'部门周报':'周会与老板汇报','本周经营数据尚未发布')}<main class="content"><section class="panel real-data-empty"><span>等待周版本</span><h2>本周经营数据尚未写入网页</h2><p>请由店长把本周Excel交给Codex生成新的静态数据包并发布。门店员工无需自行导入Excel。</p></section></main>`}
+  function emptyData(){return `${header(state.page==='overview'?'周经营总览':state.page==='frontDouyin'?'前厅与抖音':state.page==='douyinTopic'?'抖音经营详情':state.page==='reports'?'部门周报':'周会与老板汇报','本周经营数据尚未发布')}<main class="content"><section class="panel real-data-empty"><span>等待周版本</span><h2>本周经营数据尚未写入网页</h2><p>请由店长把本周Excel交给Codex生成新的静态数据包并发布。门店员工无需自行导入Excel。</p></section></main>`}
   function validateReportDOM(){if(state.page!=="reports"||!current)return;const closure=isClosureDepartment(state.dept),front=state.dept==='front',expected=closure?Object.fromEntries(window.ReportItems.sections.map(s=>[s.key,0])):front?Object.fromEntries([['overview',0],['analysis',5],['sales',0],...window.FrontReport.sections.map(s=>[s.key,0])]):{"key-result":1,problems:6,support:12,focus:12,undone:9};const result={};for(const [id,minFields] of Object.entries(expected)){const selector=closure?`[data-closure-module="${id}"]`:`[data-${front?'front':'report'}-module="${id}"]`,module=document.querySelector(selector),fields=module?module.querySelectorAll("input, textarea, select").length:0;result[id]={exists:Boolean(module),fields,fillable:fields>=minFields}}const ok=Object.values(result).every(x=>x.exists&&x.fillable);document.documentElement.dataset.reportDomReady=ok?"true":"false";window.__liteReportDomCheck={ok,result};if(!ok)console.error("部门周报核心模块渲染不完整",result)}
-  function render(){let body=!current?emptyData():state.page==='overview'?overview():state.page==='frontDouyin'?frontDouyin():state.page==='reports'?reports():meetingV2();app.innerHTML=`<div class="shell ${state.presentation?'presentation':''}">${sidebar()}<div class="workspace">${body}</div></div>${modal()}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;bind();validateReportDOM();const focusSelector=state.focusAfterRender;state.focusAfterRender=null;if(focusSelector)setTimeout(()=>{const target=document.querySelector(focusSelector);target?.closest('details')?.setAttribute('open','');target?.focus()},0)}
+  function render(){let body=!current?emptyData():state.page==='overview'?overview():state.page==='frontDouyin'?frontDouyin():state.page==='douyinTopic'?douyinTopicPage():state.page==='reports'?reports():meetingV2();app.innerHTML=`<div class="shell ${state.presentation?'presentation':''}">${sidebar()}<div class="workspace">${body}</div></div>${modal()}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;bind();validateReportDOM();const focusSelector=state.focusAfterRender;state.focusAfterRender=null;if(focusSelector)setTimeout(()=>{const target=document.querySelector(focusSelector);target?.closest('details')?.setAttribute('open','');target?.focus()},0)}
   function reportDraft(status="草稿"){
     const form=document.querySelector('[data-report-form]');if(!form||!current)return null;
     const existing=state.reports[state.dept]||{};let record={...existing,departmentId:state.dept,weekId:current.id,status,editorName:state.cloud.session?.name||existing.editorName||"未填写"};
@@ -378,16 +392,16 @@
     record.status=status;
     if(status==='已确认'){record.confirmedBy=state.cloud.session.name;record.confirmedAt=new Date().toISOString()}
     state.reports[department]=record;window.CloudSync.saveLocalDraft(department,record);
-    edit.saving=true;state.cloud.status="saving";updateReportSaveUi();
+    edit.saving=true;state.cloud.status="saving";updateReportSaveUi(department);
     try{
       const result=await (reportSaveQueue=reportSaveQueue.catch(()=>{}).then(()=>window.CloudSync.saveReport(department,record,{keepalive})));
       if(state.reports[department]===record)state.reports[department]=result.report;
       edit.saving=false;edit.failed=false;edit.dirty=false;edit.recovery=null;edit.sessionDraft=false;edit.baseRecord=cloneRecord(result.report);edit.lastSavedAt=result.report.updatedAt||new Date().toISOString();
       window.CloudSync.clearLocalDraft(department,record.weekId);state.cloud.status="synced";state.cloud.lastUpdated=edit.lastSavedAt;
-      if(rerenderAfter)render();else updateReportSaveUi();
+      if(rerenderAfter)render();else updateReportSaveUi(department);
       return {ok:true,report:result.report};
     }catch(error){
-      edit.saving=false;edit.failed=true;edit.dirty=true;state.cloud.status="offline";window.CloudSync.saveLocalDraft(department,record);updateReportSaveUi();
+      edit.saving=false;edit.failed=true;edit.dirty=true;state.cloud.status="offline";window.CloudSync.saveLocalDraft(department,record);updateReportSaveUi(department);
       if(!silent)console.warn(error);
       return {ok:false,error};
     }
@@ -447,19 +461,42 @@
     };
     form.addEventListener('input',updateRow);form.addEventListener('change',updateRow);
   }
+  function bindDouyinTopic(){
+    if(state.page!=='douyinTopic'||!state.cloud.session)return;
+    const form=document.querySelector('[data-topic-notes]');if(!form)return;
+    const record=douyinTopicNotes();
+    const update=event=>{
+      const field=event.target.dataset.topicField,rowElement=event.target.closest('[data-topic-row]');if(!field||!rowElement)return;
+      const list=rowElement.dataset.topicList,row=record[`topic_${list}`]?.find(item=>item.id===rowElement.dataset.topicRow);if(!row)return;
+      row[field]=event.target.value;markReportDirty(record,'douyin');
+    };
+    form.addEventListener('input',update);form.addEventListener('change',update);
+    form.querySelectorAll('[data-topic-add]').forEach(button=>button.onclick=()=>{
+      const list=button.dataset.topicAdd,blank=list==='findings'?window.DouyinTopic.blankFinding():window.DouyinTopic.blankAction();
+      record[`topic_${list}`].push(blank);markReportDirty(record,'douyin');state.focusAfterRender=`[data-topic-row="${blank.id}"] [data-topic-field]`;render();
+    });
+    form.querySelectorAll('[data-topic-delete]').forEach(button=>button.onclick=()=>{
+      const row=button.closest('[data-topic-row]'),list=row?.dataset.topicList;if(!row||!list)return;
+      record[`topic_${list}`]=record[`topic_${list}`].filter(item=>item.id!==row.dataset.topicRow);markReportDirty(record,'douyin');render();
+    });
+    document.querySelector('[data-topic-save]')?.addEventListener('click',async()=>{
+      const result=await saveReport('草稿',{record});if(result.ok)flash('抖音专题填写已保存');else flash('保存失败，请重试');
+    });
+  }
   function completeReportNavigation(next){
     state.modal=null;state.pendingNavigation=null;
     if(next.type==='page'){state.page=next.value;window.scrollTo(0,0)}
     if(next.type==='department')state.dept=next.value;
     render();
   }
+  function activeEditableDepartment(){return state.page==='douyinTopic'?'douyin':state.dept}
   function requestReportNavigation(next){
-    const edit=reportEdit();
-    if(state.page==='reports'&&state.cloud.session&&state.reports[state.dept]?.status!=='已确认'&&edit.dirty){state.pendingNavigation=next;state.modal='unsaved-changes';render();return;}
+    const department=activeEditableDepartment(),edit=reportEdit(department);
+    if((state.page==='reports'||state.page==='douyinTopic')&&state.cloud.session&&state.reports[department]?.status!=='已确认'&&edit.dirty){state.pendingNavigation=next;state.modal='unsaved-changes';render();return;}
     completeReportNavigation(next);
   }
   function discardCurrentLocalDraft(){
-    const edit=reportEdit(),department=state.dept;
+    const department=activeEditableDepartment(),edit=reportEdit(department);
     state.reports[department]=cloneRecord(edit.baseRecord);
     edit.dirty=false;edit.saving=false;edit.failed=false;edit.recovery=null;edit.sessionDraft=false;edit.baseRecord=null;
     window.CloudSync.clearLocalDraft(department,current?.id);
@@ -467,14 +504,15 @@
   async function resolveUnsavedNavigation(action){
     if(action==='continue'){state.modal=null;state.pendingNavigation=null;render();return;}
     const next=state.pendingNavigation;
-    if(action==='save')await saveReport('草稿',{record:state.reports[state.dept],silent:true});
+    if(action==='save'){const department=activeEditableDepartment();await saveReport('草稿',{record:state.reports[department],silent:true});}
     if(action==='discard')discardCurrentLocalDraft();
     completeReportNavigation(next||{type:'page',value:state.page});
   }
   function persistUnsavedReportOnLeave(){
-    if(state.page!=='reports'||!state.cloud.session||state.reports[state.dept]?.status==='已确认')return;
-    const edit=reportEdit();if(!edit.dirty)return;
-    const record=state.reports[state.dept];
+    if((state.page!=='reports'&&state.page!=='douyinTopic')||!state.cloud.session)return;
+    const department=activeEditableDepartment();if(state.reports[department]?.status==='已确认')return;
+    const edit=reportEdit(department);if(!edit.dirty)return;
+    const record=state.reports[department];
     if(record)void saveReport('草稿',{silent:true,record,keepalive:true});
   }
   function bindCore(){
@@ -485,6 +523,7 @@
     document.querySelector('[data-auth-form]')?.addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form)),name=String(data.name||'').trim(),previousName=savedEditorName();if(previousName&&name!==previousName&&!window.confirm(`上次填写人是${previousName}，是否确认改为${name}？`))return;try{localStorage.setItem(EDITOR_NAME_KEY,name)}catch(_){}state.cloud.session=await window.CloudSync.login(data.role,"",name);state.modal=null;flash(`已进入${state.cloud.session.role==='manager'?'店长':'部门'}编辑模式`)});
     document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>{state.tab=button.dataset.tab;render()});
     document.querySelectorAll('[data-rank]').forEach(button=>button.onclick=()=>{state.rank=button.dataset.rank;render()});
+    document.querySelectorAll('[data-open-douyin-topic]').forEach(button=>button.onclick=()=>requestReportNavigation({type:'page',value:'douyinTopic'}));
     document.querySelectorAll('[data-dept]').forEach(button=>button.onclick=()=>requestReportNavigation({type:'department',value:button.dataset.dept}));
     document.querySelectorAll('[data-meeting-mode]').forEach(button=>button.onclick=()=>{state.meetingMode=button.dataset.meetingMode;render()});
     document.querySelector('[data-copy-undone]')?.addEventListener('click',()=>{[0,1,2].forEach(index=>{const from=document.querySelector(`[name="undone_${index}"]`),to=document.querySelector(`[name="focus_${index}_title"]`);if(from?.value&&to&&!to.value)to.value=from.value});const draft=reportDraft('草稿');if(draft)markReportDirty(draft)});
@@ -529,6 +568,7 @@
     originalBind();
     bindClosureReport();
     bindFrontReport();
+    bindDouyinTopic();
     decorateMeetingReport();
     if(state.page==='meeting'&&state.meetingMode==='boss'){const insights=document.querySelector('.boss-insights'),actions=document.querySelector('.action-summary');if(insights&&actions)actions.before(insights)}
     document.querySelector('[data-presentation]')?.addEventListener('click',()=>{state.presentation=!state.presentation;render()});
