@@ -1,153 +1,141 @@
 (function () {
-  const finite = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
-  const value = input => finite(input) ? Number(input) : null;
-  const revenue = week => finite(week?.operatingRevenue)
-    ? Number(week.operatingRevenue)
-    : Object.values(week?.revenue || {}).reduce((total, item) => total + (finite(item) ? Number(item) : 0), 0);
-  const cardCount = week => ['c299', 'c599', 'c999'].reduce((total, key) => total + (finite(week?.cards?.[key]) ? Number(week.cards[key]) : 0), 0);
-  const convertibleFamilies = week => finite(week?.admission) && finite(week?.historical) ? Number(week.admission) - Number(week.historical) : null;
+  const finite = input => input !== null && input !== undefined && input !== '' && Number.isFinite(Number(input));
+  const number = input => finite(input) ? Number(input) : null;
+  const money = input => `¥${Math.abs(Number(input)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`;
+  const signedMoney = input => `${input >= 0 ? '+' : '-'}${money(input)}`;
+  const revenue = week => finite(week?.operatingRevenue) ? Number(week.operatingRevenue) : Object.values(week?.revenue || {}).reduce((total, item) => total + (finite(item) ? Number(item) : 0), 0);
+  const cards = week => ['c299', 'c599', 'c999'].reduce((total, key) => total + (finite(week?.cards?.[key]) ? Number(week.cards[key]) : 0), 0);
+  const convertible = week => finite(week?.admission) && finite(week?.historical) ? Number(week.admission) - Number(week.historical) : null;
   const percent = (numerator, denominator) => finite(numerator) && finite(denominator) && Number(denominator) > 0 ? Number(numerator) / Number(denominator) * 100 : null;
-  const money = number => `¥${Math.abs(Number(number)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`;
-  const signedMoney = number => `${number >= 0 ? '+' : '-'}${money(number)}`;
-  const signedPercent = number => `${number >= 0 ? '+' : ''}${number.toFixed(1)}%`;
-  const signedPoints = number => `${number >= 0 ? '+' : ''}${number.toFixed(2)} 个百分点`;
-  const changeRate = (current, previous) => finite(current) && finite(previous) && Number(previous) !== 0
-    ? (Number(current) - Number(previous)) / Math.abs(Number(previous)) * 100
-    : null;
-  const douyinFact = (data, week) => data?.douyinFacts?.[week?.id] || {};
-  const douyinTopic = (data, week) => data?.douyinTopic?.[week?.id] || null;
-  const priorityOrder = { P1: 1, P2: 2, P3: 3 };
+  const priorityOrder = { P0: 0, P1: 1, P2: 2 };
 
-  function insight(priority, domain, title, fact, judgement, impact, action, basis) {
-    return { priority, domain, title, fact, judgement, impact, action, basis };
+  function make(priority, domain, title, fact, judgement, reason, action, owner, timing, impact, basis) {
+    return { priority, domain, title, fact, judgement, reason, action, owner, timing, impact, basis };
   }
 
   function build({ data, current, previous }) {
     if (!current) return [];
-    const items = [];
+    const results = [];
     const currentRevenue = revenue(current);
     const previousRevenue = previous ? revenue(previous) : null;
     const targetRate = percent(currentRevenue, current.target);
+    const currentRate = percent(cards(current), convertible(current));
+    const previousRate = previous ? percent(cards(previous), convertible(previous)) : null;
+    const currentTopic = data?.douyinTopic?.[current.id] || null;
+    const previousTopic = previous ? data?.douyinTopic?.[previous.id] || null : null;
+    const currentFact = data?.douyinFacts?.[current.id] || {};
+    const previousFact = previous ? data?.douyinFacts?.[previous.id] || {} : {};
 
     if (finite(current.target) && finite(currentRevenue)) {
       const gap = Number(current.target) - currentRevenue;
-      if (gap > 0) {
-        items.push(insight(
-          'P1', 'store', '经营目标尚未完成',
-          `退款后净经营营业额 ${money(currentRevenue)}，目标完成率 ${targetRate?.toFixed(1)}%，距目标 ${money(gap)}。`,
-          '本周经营结果未达到既定目标，需要在周会上明确优先补足的收入来源。',
-          '目标缺口仍在，若不拆解客流、会员销售与核销三项差异，下一周难以形成可执行修复动作。',
-          '建议店长确认：客流、会员新办、抖音核销三项中，哪一项是下周第一优先级。',
-          '退款后净营业额 ÷ 周目标'
-        ));
-      } else {
-        items.push(insight(
-          'P3', 'store', '经营目标已完成',
-          `退款后净经营营业额 ${money(currentRevenue)}，目标完成率 ${targetRate?.toFixed(1)}%。`,
-          '本周已达到目标，应继续核实增长是否来自可持续的客流、转化或收入结构改善。',
-          '避免把一次性退款减少、跨期核销释放误当作长期经营能力提升。',
-          '建议复盘增长项是否可在下周复用，并保留可验证的动作。',
-          '退款后净营业额 ÷ 周目标'
-        ));
-      }
+      results.push(make(
+        gap > 0 && targetRate <= 90 ? 'P0' : gap > 0 ? 'P1' : 'P2', 'store',
+        gap > 0 ? '经营目标存在缺口' : '经营目标已完成，需验证可持续性',
+        `本周退款后净经营营业额 ${money(currentRevenue)}；周目标 ${money(current.target)}；目标完成率 ${targetRate.toFixed(1)}%${gap > 0 ? `，距目标 ${money(gap)}` : ''}。`,
+        gap > 0 ? '本周经营结果未达到目标，需从客流、会员新办与抖音核销分别确定修复抓手。' : '本周已达到目标，但不能把一次性退款减少或跨期核销释放当作长期能力。',
+        previous && currentRevenue < previousRevenue ? `推测：净经营营业额较上周减少 ${money(previousRevenue - currentRevenue)}，客流、会员新办和核销均需拆开验证。` : '暂无法判断单一原因，需补充客流、会员与核销分项变化。',
+        gap > 0 ? '店长在周会上明确下周第一优先级：拉回客流、提升会员新办或提升核销到店。' : '复盘达标收入中哪些可以被下周复用，并设置可验证目标。',
+        '店长', gap > 0 ? '周五前' : '下周复盘',
+        '目标缺口未拆解时，行动会停留在泛泛“加强经营”。', '退款后净经营营业额 ÷ 周目标'
+      ));
     }
 
     if (previous && finite(currentRevenue) && finite(previousRevenue)) {
       const revenueChange = currentRevenue - previousRevenue;
       const admissionChange = finite(current.admission) && finite(previous.admission) ? Number(current.admission) - Number(previous.admission) : null;
-      const currentRate = percent(cardCount(current), convertibleFamilies(current));
-      const previousRate = percent(cardCount(previous), convertibleFamilies(previous));
       const rateChange = finite(currentRate) && finite(previousRate) ? currentRate - previousRate : null;
-      let judgement = `净经营营业额较上周${revenueChange >= 0 ? '增加' : '减少'} ${money(Math.abs(revenueChange))}（${signedPercent(changeRate(currentRevenue, previousRevenue) || 0)}）。`;
-      let action = '建议主管分别说明客流、办卡转化和收入结构变化，避免仅用总营业额解释结果。';
-      if (finite(admissionChange) && admissionChange < 0 && finite(rateChange) && rateChange > 0) {
-        judgement += ` 入园家庭减少 ${Math.abs(admissionChange)} 户，但办卡率提升 ${Math.abs(rateChange).toFixed(2)} 个百分点；转化改善未必足以抵消客流下降。`;
-        action = '建议前厅同时复盘高峰接待、有效家庭识别及销售转化，店长确认客流恢复动作。';
-      } else if (finite(admissionChange) && admissionChange < 0 && (!finite(rateChange) || rateChange <= 0)) {
-        judgement += ` 入园家庭减少 ${Math.abs(admissionChange)} 户，办卡转化未形成抵消。`;
-        action = '建议优先核实客流下滑来源，再明确前厅转化与现场承接的补救动作。';
-      } else if (finite(admissionChange) && admissionChange >= 0 && finite(rateChange) && rateChange < 0) {
-        judgement += ` 入园家庭未下降，但办卡率下降 ${Math.abs(rateChange).toFixed(2)} 个百分点，问题更可能出现在转化环节。`;
-        action = '建议前厅主管抽查接待分流、话术执行和卡型推荐，而非只追加流量。';
-      }
-      items.push(insight(
-        revenueChange < 0 ? 'P1' : 'P2', 'front', '客流与转化需要拆开复盘',
-        `入园家庭 ${finite(current.admission) ? `${Number(current.admission)} 户` : '未统计'}；办卡率 ${finite(currentRate) ? `${currentRate.toFixed(2)}%` : '不可计算'}${finite(rateChange) ? `，较上周 ${signedPoints(rateChange)}` : '，上周暂不可比'}。`,
-        judgement,
-        revenueChange < 0 ? '客流与转化双重走弱会直接扩大目标缺口。' : '总额改善时仍需确认是否由真实转化提升带动。',
-        action,
+      const conversionJudgement = admissionChange < 0 && rateChange > 0
+        ? '客流下降，但办卡转化改善；转化改善未必足以抵消客流下降。'
+        : admissionChange < 0 && (!finite(rateChange) || rateChange <= 0)
+          ? '客流与转化未形成抵消，门店经营承压。'
+          : admissionChange >= 0 && rateChange < 0
+            ? '客流未下降但转化走弱，优先检查接待与销售承接。'
+            : '客流、转化与营业额应继续拆开观察，避免只看单一总额。';
+      results.push(make(
+        revenueChange < 0 ? 'P1' : 'P2', 'front', '客流与办卡转化需拆开复盘',
+        `入园家庭 ${finite(current.admission) ? `${Number(current.admission)}户` : '未统计'}${finite(admissionChange) ? `，较上周 ${admissionChange >= 0 ? '+' : '-'}${Math.abs(admissionChange)}户` : ''}；办卡率 ${finite(currentRate) ? `${currentRate.toFixed(2)}%` : '不可计算'}${finite(rateChange) ? `，较上周 ${rateChange >= 0 ? '+' : ''}${rateChange.toFixed(2)}个百分点` : '，暂不可比'}；净经营营业额 ${revenueChange >= 0 ? '+' : '-'}${money(revenueChange)}。`,
+        conversionJudgement,
+        admissionChange < 0 ? '推测：客流减少可能是主要压力；需结合天气、活动、营业日和渠道流量数据核实。' : '暂无法判断原因，需补充分时段接待与员工承接数据。',
+        admissionChange < 0 ? '前厅复盘高峰接待、有效家庭识别与销售承接；店长同步确认客流恢复动作。' : '抽查接待分流、销售话术和卡型推荐，形成一项可验证的转化动作。',
+        '前厅', '本周内', revenueChange < 0 ? '客流与转化双重走弱会直接扩大目标缺口。' : '总额改善时仍需确认是否由真实转化改善带动。',
         '入园家庭、历史会员家庭、办卡家庭；办卡率 = 办卡家庭 ÷ 有效可转化家庭'
       ));
     }
 
     if (previous && finite(current?.revenue?.newMember) && finite(previous?.revenue?.newMember)) {
       const memberChange = Number(current.revenue.newMember) - Number(previous.revenue.newMember);
-      const currentMidBig = percent((Number(current?.cards?.c599) || 0) + (Number(current?.cards?.c999) || 0), cardCount(current));
-      const previousMidBig = percent((Number(previous?.cards?.c599) || 0) + (Number(previous?.cards?.c999) || 0), cardCount(previous));
+      const currentMidBig = percent((Number(current?.cards?.c599) || 0) + (Number(current?.cards?.c999) || 0), cards(current));
+      const previousMidBig = percent((Number(previous?.cards?.c599) || 0) + (Number(previous?.cards?.c999) || 0), cards(previous));
       const midBigChange = finite(currentMidBig) && finite(previousMidBig) ? currentMidBig - previousMidBig : null;
-      if (memberChange < 0 || (finite(midBigChange) && midBigChange < -3)) {
-        items.push(insight(
-          'P2', 'front', '会员销售结构走弱',
-          `会员新办收入 ${money(current.revenue.newMember)}，较上周 ${signedMoney(memberChange)}；中大卡率 ${finite(currentMidBig) ? `${currentMidBig.toFixed(2)}%` : '不可计算'}${finite(midBigChange) ? `，较上周 ${signedPoints(midBigChange)}` : ''}。`,
-          '会员收入或中大卡结构下降，说明销售结果不仅要看办卡数，也要看卡型结构是否下沉。',
-          '低价卡占比上升会限制会员收入和后续复购价值。',
-          '建议前厅主管检查599/999推荐场景、员工话术与高峰时段的成交结构。',
-          '运营报表会员新办收入；299/599/999卡数'
-        ));
-      }
+      if (memberChange < 0 || (finite(midBigChange) && midBigChange < -3)) results.push(make(
+        'P1', 'front', '会员销售金额或卡型结构走弱',
+        `会员新办收入 ${money(current.revenue.newMember)}，较上周 ${signedMoney(memberChange)}；中大卡率 ${finite(currentMidBig) ? `${currentMidBig.toFixed(2)}%` : '不可计算'}${finite(midBigChange) ? `，较上周 ${midBigChange >= 0 ? '+' : ''}${midBigChange.toFixed(2)}个百分点` : ''}。`,
+        '办卡结果不能只看数量；会员新办下降或中大卡占比下沉会降低本周收入与后续复购价值。',
+        '暂无法判断是人员话术、客群结构还是票型偏好变化；需补充员工接待与卡型推荐过程数据。',
+        '复盘599/999推荐场景与员工话术；下一周设定中大卡率和会员收入两项可验收目标。',
+        '前厅', '周五前', '低价卡占比上升会限制会员收入和后续价值。', '运营报表会员新办收入；299/599/999卡数'
+      ));
     }
 
-    const currentFact = douyinFact(data, current);
-    const previousFact = douyinFact(data, previous);
-    const currentTopic = douyinTopic(data, current);
-    const previousTopic = douyinTopic(data, previous);
-    const currentPaid = value(currentTopic?.orders?.userPaid) ?? value(currentFact.paidAmount);
-    const previousPaid = value(previousTopic?.orders?.userPaid) ?? value(previousFact.paidAmount);
-    const currentRedeemed = value(currentTopic?.fulfillment?.redeemedAmount) ?? value(currentFact.redeemedOrderReceived);
-    const previousRedeemed = value(previousTopic?.fulfillment?.redeemedAmount) ?? value(previousFact.redeemedOrderReceived);
+    const currentPaid = number(currentTopic?.orders?.userPaid) ?? number(currentFact.paidAmount);
+    const previousPaid = number(previousTopic?.orders?.userPaid) ?? number(previousFact.paidAmount);
+    const currentRedeemed = number(currentTopic?.fulfillment?.redeemedAmount) ?? number(currentFact.redeemedOrderReceived);
+    const previousRedeemed = number(previousTopic?.fulfillment?.redeemedAmount) ?? number(previousFact.redeemedOrderReceived);
     if (finite(currentPaid) || finite(currentRedeemed)) {
       const paidChange = finite(currentPaid) && finite(previousPaid) ? currentPaid - previousPaid : null;
       const redeemedChange = finite(currentRedeemed) && finite(previousRedeemed) ? currentRedeemed - previousRedeemed : null;
       const sevenDay = currentTopic?.fulfillment?.sevenDay;
-      const maturity = finite(sevenDay?.rate) ? `7天到店率 ${Number(sevenDay.rate).toFixed(1)}%。` : '本期订单的7天到店率尚未成熟，仍在持续积累中。';
-      const direction = finite(paidChange) && paidChange < 0 && finite(redeemedChange) && redeemedChange < 0
-        ? '成交期支付与核销发生期属于不同时间事实；两者均较上周减少，需要分别看成交效率与履约释放。'
-        : '成交期支付与核销发生期属于不同时间事实，不能直接相除判断严格转化。';
-      items.push(insight(
-        finite(paidChange) && paidChange < 0 ? 'P2' : 'P3', 'douyin', '抖音成交与到店需分期判断',
-        `本期支付金额 ${finite(currentPaid) ? money(currentPaid) : '未统计'}${finite(paidChange) ? `，较上周 ${signedMoney(paidChange)}` : ''}；本期核销订单实收 ${finite(currentRedeemed) ? money(currentRedeemed) : '未统计'}${finite(redeemedChange) ? `，较上周 ${signedMoney(redeemedChange)}` : ''}。`,
-        `${direction}${maturity}`,
-        '若把当周支付和当周核销强行视作同一批订单，会误判抖音渠道的真实到店效率。',
-        '建议直播/商品复盘看支付与GMV；门店经营复盘看核销订单实收；成熟后再看同批7天到店率。',
-        '订单按支付时间；核销按核销时间；7天到店率仅统计成熟同批订单'
+      results.push(make(
+        finite(paidChange) && paidChange < 0 ? 'P1' : 'P2', 'douyin', '抖音成交、核销与到店需分期判断',
+        `支付金额 ${finite(currentPaid) ? money(currentPaid) : '缺少订单数据'}${finite(paidChange) ? `，较上周 ${signedMoney(paidChange)}` : ''}；核销订单实收 ${finite(currentRedeemed) ? money(currentRedeemed) : '缺少核销数据'}${finite(redeemedChange) ? `，较上周 ${signedMoney(redeemedChange)}` : ''}；${finite(sevenDay?.rate) ? `7天到店率 ${Number(sevenDay.rate).toFixed(1)}%。` : '7天到店率持续积累中。'}`,
+        '支付按成交期、核销按到店发生期，属于不同时间事实；不能把两者直接相除当作同批订单转化率。',
+        '推测：直播效率、商品结构或渠道来源可能变化；现有数据不能证明哪一个是唯一原因。',
+        '直播/商品复盘看支付和GMV；门店复盘看核销订单实收；成熟后再追踪同批7天到店率。',
+        '主播/抖音', '本周内', '混用成交期与核销期会误判渠道真实到店效率。', '订单按支付时间；核销按核销时间；7天到店率仅统计成熟同批订单'
       ));
     }
 
-    const quality = currentTopic?.quality;
-    const cardGap = finite(current?.ops?.newCardFamilies) ? Number(current.ops.newCardFamilies) - cardCount(current) : null;
-    const qualityReasons = [];
-    if (quality?.exactDuplicateCandidates > 0) qualityReasons.push(`核销明细存在 ${quality.exactDuplicateCandidates} 条完全重复候选记录`);
-    if (quality?.productRefundAnomalies > 0) qualityReasons.push(`${quality.productRefundAnomalies} 个商品退款口径需核对`);
-    if (finite(cardGap) && cardGap !== 0) qualityReasons.push(`运营报表办卡家庭与卡型合计相差 ${Math.abs(cardGap)} 张`);
-    if (qualityReasons.length) {
-      items.push(insight(
-        'P2', 'quality', '数据质量提示，结论需保留边界',
-        qualityReasons.join('；') + '。',
-        '该问题不自动改数，也不等同于经营异常；相关比例和排名应以“需核对”方式使用。',
-        '数据口径未确认时，容易把退款、重复券码或缺失卡型误判为真实经营波动。',
-        '建议在周会前核对源表字段与导出时间，确认后再用于绩效或人员横向比较。',
-        '抖音订单/核销/商品质量检查；运营报表与卡型明细对账'
+    const live = currentTopic?.live, priorLive = previousTopic?.live;
+    const gmvPerHour = finite(live?.gmv) && finite(live?.hours) && Number(live.hours) > 0 ? Number(live.gmv) / Number(live.hours) : null;
+    const priorGmvPerHour = finite(priorLive?.gmv) && finite(priorLive?.hours) && Number(priorLive.hours) > 0 ? Number(priorLive.gmv) / Number(priorLive.hours) : null;
+    const bestSlot = currentTopic?.liveBreakdown?.best, lowestSlot = currentTopic?.liveBreakdown?.lowest;
+    if (finite(gmvPerHour) && finite(priorGmvPerHour)) {
+      const efficiencyChange = gmvPerHour - priorGmvPerHour;
+      results.push(make(
+        efficiencyChange < 0 ? 'P1' : 'P2', 'douyin', efficiencyChange < 0 ? '直播单位时长产出承压' : '直播单位时长产出改善',
+        `直播每小时成交额 ${money(gmvPerHour)}，较上周 ${signedMoney(efficiencyChange)}${bestSlot ? `；高效时段 ${bestSlot.name} ${money(bestSlot.gmvPerHour)}/小时` : ''}${lowestSlot ? `；低效时段 ${lowestSlot.name} ${money(lowestSlot.gmvPerHour)}/小时` : ''}。`,
+        efficiencyChange < 0 ? '加长直播时长不能替代效率；应优先调整时段、内容与主推商品。' : '高效时段与商品组合应沉淀为可复用的下周试验。',
+        bestSlot && lowestSlot ? `推测：${bestSlot.name}与${lowestSlot.name}效率差异明显；需继续验证流量、商品或内容差异。` : '暂无法判断原因，需补充时段、商品与内容标签。',
+        efficiencyChange < 0 ? '保留高效场，压缩或改造低效场；每场记录主推票型、时段与成交结果。' : '复制高效时段的商品组合与话术，下周以每小时成交额验证。',
+        '主播/抖音', '下周复盘前', '低效场持续投入会拉低整体直播产出。', '直播成交金额 ÷ 直播时长；早/午/晚场效率矩阵'
       ));
     }
 
-    return items.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 5);
+    const rows = Array.isArray(data?.receptionByWeek?.[current.id]) ? data.receptionByWeek[current.id] : [];
+    const assigned = rows.reduce((total, row) => total + (!row?.aggregate && finite(row?.reception) ? Number(row.reception) : 0), 0);
+    const totalConvertible = convertible(current), quality = currentTopic?.quality;
+    const cardGap = finite(current?.ops?.newCardFamilies) ? Number(current.ops.newCardFamilies) - cards(current) : null;
+    const qualityFacts = [];
+    if (finite(totalConvertible) && assigned < totalConvertible) qualityFacts.push(`员工已归属 ${assigned}户，未归属 ${Number(totalConvertible) - assigned}户`);
+    if (quality?.exactDuplicateCandidates > 0) qualityFacts.push(`核销明细有 ${quality.exactDuplicateCandidates} 条重复候选`);
+    if (quality?.productRefundAnomalies > 0) qualityFacts.push(`${quality.productRefundAnomalies} 个商品退款口径需核对`);
+    if (finite(cardGap) && cardGap !== 0) qualityFacts.push(`运营表办卡家庭与卡型合计相差 ${Math.abs(cardGap)}张`);
+    if (qualityFacts.length) results.push(make(
+      'P1', 'quality', '数据质量需先核对，不等同于经营问题', qualityFacts.join('；') + '。',
+      '该类差异不自动改数，也不应被直接解读为人员或经营表现下滑。',
+      '暂无法判断差异是导出重复、跨期退款、漏录还是字段口径不同，必须先核对原始事实。',
+      '周会前确认源表字段与导出时间；补齐前，员工个人转化率和退款率不进入正式绩效比较。',
+      '前厅 / 店长', '周会前', '口径未确认会导致错误归因和错误考核。', '销售办卡 Sheet1、运营报表、抖音订单/核销/商品质量检查'
+    ));
+
+    return results.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 6);
   }
 
   function headline(items) {
-    const target = items.find(item => item.title.includes('经营目标'));
-    const key = items.find(item => item.priority !== 'P3' && item !== target) || items[0];
-    if (!target && !key) return '数据已加载；暂无足够的对比期数据生成经营诊断。';
-    return [target?.fact, key?.judgement].filter(Boolean).join(' ');
+    const target = items.find(item => item.domain === 'store');
+    const main = items.find(item => item.domain !== 'quality' && item !== target) || items[0];
+    if (!target && !main) return '数据已加载；暂无足够的对比期数据生成经营诊断。';
+    return [target?.fact, main?.judgement].filter(Boolean).join(' ');
   }
 
   window.WeeklyInsights = { build, headline };

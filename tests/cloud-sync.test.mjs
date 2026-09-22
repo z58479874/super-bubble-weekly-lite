@@ -100,9 +100,11 @@ test("离线草稿只保存在本机，重新读取不会自动写入云端", as
 
 test("店长周会内容使用同一张表", async () => {
   await window.CloudSync.login("manager", "", "店长");
-  const result = await window.CloudSync.saveMeeting({ weekId: "period-b", actions: [{ title: "周末排班" }], decisions: [], ownerSupport: [] });
+  const result = await window.CloudSync.saveMeeting({ weekId: "period-b", actions: [{ title: "周末排班" }], decisions: [], ownerSupport: [], managerJudgement: "本周先恢复周末客流" });
   assert.equal(result.meeting.actions[0].title, "周末排班");
+  assert.equal(result.meeting.managerJudgement, "本周先恢复周末客流");
   assert.ok(serverRows.some((row) => row.department === "meeting" && row.section === "manager_key_actions"));
+  assert.ok(serverRows.some((row) => row.department === "meeting" && row.section === "manager_judgement"));
 });
 
 test('事项数组保存、删除、排序、跨浏览器读取和确认历史互不覆盖',async()=>{

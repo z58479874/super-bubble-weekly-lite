@@ -197,10 +197,12 @@
     const items=window.WeeklyInsights?.build?.({data:D,current,previous})||[];
     return scope==="all"?items:items.filter(item=>item.domain===scope||item.domain==="quality");
   }
+  function diagnosticCard(item){return `<article class="diagnostic-card ${item.priority.toLowerCase()}"><div class="diagnostic-card-head"><span class="diagnostic-priority">${item.priority}</span><b>${item.title}</b></div><p><small>数据依据</small>${item.fact}</p><p><small>经营判断</small>${item.judgement}</p><p class="diagnostic-reason"><small>可能原因（推测）</small>${item.reason}</p><p><small>建议动作</small>${item.action}</p><div class="diagnostic-assignment"><span>建议负责人：<b>${item.owner}</b></span><span>完成时点：<b>${item.timing}</b></span></div><details><summary>查看经营影响与口径边界</summary><p><small>经营影响</small>${item.impact}</p><p><small>数据口径</small>${item.basis}</p></details></article>`}
   function diagnosticPanel(scope="all",title="本周经营诊断与建议",compact=false){
     const items=diagnosticItems(scope);
     if(!items.length)return `<section class="panel diagnostic-panel ${compact?'compact':''}"><div class="panel-title"><div><span>经营诊断 · 供参考</span><h2>${title}</h2><p>缺少完整对比数据，暂不生成强结论。</p></div></div></section>`;
-    return `<section class="panel diagnostic-panel ${compact?'compact':''}" data-diagnostic-scope="${scope}"><div class="panel-title"><div><span>经营诊断 · 供参考</span><h2>${title}</h2><p>规则基于统一周快照生成：只陈述可验证事实与待核实方向，不自动定责。</p></div><small class="diagnostic-rule">${items.length} 项关注点</small></div><div class="diagnostic-grid">${items.map(item=>`<article class="diagnostic-card ${item.priority.toLowerCase()}"><div class="diagnostic-card-head"><span class="diagnostic-priority">${item.priority}</span><b>${item.title}</b></div><p><small>数据事实</small>${item.fact}</p><p><small>经营判断</small>${item.judgement}</p><p><small>建议动作</small>${item.action}</p><details><summary>查看影响与数据依据</summary><p><small>经营影响</small>${item.impact}</p><p><small>数据依据</small>${item.basis}</p></details></article>`).join("")}</div></section>`;
+    const business=items.filter(item=>item.domain!=="quality"),quality=items.filter(item=>item.domain==="quality");
+    return `<section class="panel diagnostic-panel ${compact?'compact':''}" data-diagnostic-scope="${scope}"><div class="panel-title"><div><span>经营诊断 · 供参考</span><h2>${title}</h2><p>规则基于统一周快照生成：经营问题与数据质量分开呈现，不自动定责。</p></div><small class="diagnostic-rule">${business.length} 项经营关注</small></div>${business.length?`<div class="diagnostic-grid">${business.map(diagnosticCard).join("")}</div>`:'<p class="empty compact-empty">暂无足够经营事实生成诊断。</p>'}${quality.length?`<section class="diagnostic-quality"><div><b>数据质量 / 使用边界</b><span>以下仅提示需核对事项，不视为经营问题。</span></div><div class="diagnostic-grid">${quality.map(diagnosticCard).join("")}</div></section>`:''}</section>`;
   }
   function overview(){
     const rate=w=>ratio(cardCount(w),valid(w));
@@ -582,6 +584,20 @@
     if(!anchor||document.querySelector('[data-diagnostic-scope="all"]'))return;
     anchor.insertAdjacentHTML('beforebegin',diagnosticPanel('all',state.meetingMode==='boss'?'本周经营诊断（供老板决策参考）':'本周经营诊断（供主管会复盘）',true));
   }
+  function decorateManagerJudgement(){
+    if(state.page!=="meeting")return;
+    const headline=document.querySelector('.meeting-headline'),saved=String(state.meeting.managerJudgement||'').trim();
+    if(!headline||document.querySelector('[data-manager-judgement]'))return;
+    const canEdit=state.cloud.session?.role==='manager',draft=state.meeting.managerJudgementDraft??saved;
+    if(saved){const text=headline.querySelector('p');if(text)text.textContent=saved;}
+    const section=document.createElement('section');
+    section.className='panel manager-judgement';section.dataset.managerJudgement='true';
+    section.innerHTML=`<div class="panel-title"><div><span>店长最终判断</span><h2>把自动诊断转成会议结论</h2><p>自动诊断仅供参考；这段内容由店长确认后作为周会与老板汇报的正式表述。</p></div><small data-manager-judgement-status>${saved?'已保存':'未填写'}</small></div>${canEdit?`<textarea data-manager-judgement-input placeholder="例如：本周客流下滑是主要压力，前厅转化改善但未能抵消；下周优先恢复周末客流并保持599卡推荐。">${safeValue(draft)}</textarea><div><button class="primary" data-save-manager-judgement>保存草稿</button><small>只在点击保存时写入共享周会，不会自动保存或打断输入。</small></div>`:`<p class="manager-judgement-readonly">${safeValue(saved)||'尚未填写。请先参考自动诊断，店长确认后再发布最终判断。'}</p>`;
+    headline.after(section);
+    const input=section.querySelector('[data-manager-judgement-input]'),status=section.querySelector('[data-manager-judgement-status]');
+    if(input)input.addEventListener('input',()=>{state.meeting.managerJudgementDraft=input.value;status.textContent='有未保存修改';});
+    section.querySelector('[data-save-manager-judgement]')?.addEventListener('click',async()=>{state.meeting.managerJudgement=String(state.meeting.managerJudgementDraft??input?.value??'').trim();delete state.meeting.managerJudgementDraft;await persistMeeting();flash('店长最终判断已保存');});
+  }
   function bind(){
     originalBind();
     bindClosureReport();
@@ -589,6 +605,7 @@
     bindDouyinTopic();
     decorateMeetingReport();
     decorateMeetingDiagnosis();
+    decorateManagerJudgement();
     if(state.page==='meeting'&&state.meetingMode==='boss'){const insights=document.querySelector('.boss-insights'),actions=document.querySelector('.action-summary');if(insights&&actions)actions.before(insights)}
     document.querySelector('[data-presentation]')?.addEventListener('click',()=>{state.presentation=!state.presentation;render()});
     document.querySelector('[data-print]')?.addEventListener('click',()=>window.print());

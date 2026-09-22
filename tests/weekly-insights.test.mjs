@@ -19,11 +19,13 @@ const current = {
 
 test('经营诊断从同一周快照生成目标、转化、会员与质量提示', () => {
   const items = build({ data: { douyinFacts: {}, douyinTopic: {} }, current, previous });
-  assert.equal(items[0].title, '经营目标尚未完成');
-  assert.ok(items.some(item => item.title === '客流与转化需要拆开复盘'));
-  assert.ok(items.some(item => item.title === '会员销售结构走弱'));
-  assert.ok(items.some(item => item.title === '数据质量提示，结论需保留边界'));
+  assert.equal(items[0].title, '经营目标存在缺口');
+  assert.equal(items[0].priority, 'P0');
+  assert.ok(items.some(item => item.title === '客流与办卡转化需拆开复盘'));
+  assert.ok(items.some(item => item.title === '会员销售金额或卡型结构走弱'));
+  assert.ok(items.some(item => item.title === '数据质量需先核对，不等同于经营问题'));
   assert.match(headline(items), /退款后净经营营业额/);
+  assert.ok(items.every(item => item.owner && item.timing && item.reason));
 });
 
 test('抖音判断明确支付和核销是不同时间事实，未成熟7天率不伪造比例', () => {
@@ -37,5 +39,5 @@ test('抖音判断明确支付和核销是不同时间事实，未成熟7天率�
   const items = build({ data, current: { ...current, id: 'current' }, previous: { ...previous, id: 'previous' } });
   const douyin = items.find(item => item.domain === 'douyin');
   assert.match(douyin.judgement, /不同时间事实/);
-  assert.match(douyin.judgement, /持续积累中/);
+  assert.match(douyin.fact, /持续积累中/);
 });

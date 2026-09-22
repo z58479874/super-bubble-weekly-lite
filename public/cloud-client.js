@@ -125,12 +125,12 @@
   function meetingRows(record, now = new Date().toISOString()) {
     const who = session()?.name || record.editorName || "未填写";
     const id = record.reportId || reportId((window.LITE_DATA?.weeks || []).find((week) => week.id === record.weekId));
-    return ["actions", "decisions", "ownerSupport"].map((key) => ({
+    return ["actions", "decisions", "ownerSupport", "managerJudgement"].map((key) => ({
       report_id: id,
       department: "meeting",
-      section: key === "actions" ? "manager_key_actions" : key === "decisions" ? "manager_decisions" : "owner_support",
+      section: key === "actions" ? "manager_key_actions" : key === "decisions" ? "manager_decisions" : key === "ownerSupport" ? "owner_support" : "manager_judgement",
       item_key: key,
-      value: record[key] ?? [],
+      value: record[key] ?? (key === "managerJudgement" ? "" : []),
       status: "draft",
       editor_name: who,
       updated_at: now,
