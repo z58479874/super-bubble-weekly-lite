@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  verify-and-build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,8 +35,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm build
+      - name: Install Chromium for release verification
+        run: node scripts/install-release-browser.mjs
+
+      - name: Verify release before deployment
+        run: pnpm verify:release
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
@@ -54,7 +57,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    needs: build
+    needs: verify-and-build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
