@@ -1,3 +1,4 @@
+import { validate as validateDouyin } from "./check-douyin-daily.mjs";
 import { createServer } from "node:http";
 import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
@@ -78,7 +79,7 @@ async function assertPage(page, pageId, title) {
 
 async function browserCheck() {
   console.log("\n▶ 真实浏览器验证（模拟 GitHub Pages 子路径）");
-  process.env.PLAYWRIGHT_BROWSERS_PATH = browserPath;
+  process.env.PLAYWRIGHT_BROWSERS_PATH ||= browserPath;
   const { chromium } = await import("playwright");
   const server = await startStaticServer();
   const address = server.address();
@@ -114,6 +115,16 @@ async function browserCheck() {
       ["meeting", "周会与老板汇报"],
     ]) await assertPage(page, ...pageCheck);
 
+    const dailyLink = page.locator("[data-douyin-daily-link]");
+    if (await dailyLink.getAttribute("href") !== "./douyin-daily/") fail("每日看板入口路径错误");
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${url}douyin-daily/`, { waitUntil: "load", timeout: 30000 });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      if (!(await page.locator("body").textContent()).includes("2026")) fail("每日看板未渲染");
+      if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)) fail(`每日看板 ${width}px 横向溢出`);
+    }
+    console.log("✓ 抖音每日看板桌面与390px手机、脱敏及产物资源检查通过");
     if (errors.length) fail(errors.join("\n"));
     console.log(`✓ 生产页面可在 GitHub Pages 子路径打开：${url}`);
     console.log("✓ 桌面端与 390px 手机端五个页面均通过渲染与横向溢出检查");
@@ -124,10 +135,12 @@ async function browserCheck() {
 }
 
 try {
+  await validateDouyin();
   checkSyntax(listJavaScript(publicDir));
   const tests = readdirSync(join(root, "tests")).filter((file) => file.endsWith(".test.mjs")).map((file) => join("tests", file));
   run(node, ["--test", ...tests], "执行自动化测试");
   run(node, [join("node_modules", "vite", "bin", "vite.js"), "build", "--base=/super-bubble-weekly-lite/"], "生产构建");
+  await validateDouyin(join(distDir, "douyin-daily"));
   await browserCheck();
   console.log("\n✅ verify:release 全部通过：允许发布。");
 } catch (error) {
