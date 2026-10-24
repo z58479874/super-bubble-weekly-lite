@@ -89,6 +89,17 @@ async function browserCheck() {
 
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+    // Static release verification must not depend on a third-party database's DNS.
+    // Cloud read/write semantics remain covered by tests/cloud-sync.test.mjs.
+    // Only this test browser receives an empty read fixture; deployed files are unchanged.
+    if (process.env.VITE_SUPABASE_URL) {
+      const cloudOrigin = new URL(process.env.VITE_SUPABASE_URL).origin;
+      await page.route((target) => target.origin === cloudOrigin && target.pathname === "/rest/v1/weekly_report_edits", async (route) => {
+        if (route.request().method() !== "GET") fail("静态页面验证意外尝试写入云端");
+        await route.fulfill({ status: 200, contentType: "application/json", body: "[]", headers: { "access-control-allow-origin": "*" } });
+      });
+      console.log("✓ 测试浏览器使用云端只读空数据夹具；线上云同步配置不变");
+    }
     page.on("pageerror", (error) => errors.push(`未捕获异常：${error.message}`));
     page.on("console", (message) => {
       if (message.type() === "error") errors.push(`控制台错误：${message.text()}`);
